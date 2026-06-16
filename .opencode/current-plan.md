@@ -1,188 +1,166 @@
-# Phase 1 Implementation Plan — Project Scaffold
+# Phase 2 Implementation Plan — Transcription Pipeline
 
 ## Goal
-Set up the Electron + Vite + React + TypeScript foundation with Tailwind CSS, shadcn/ui, Zustand, SQLite, and a basic layout for the AI Video Clipper app.
+Enable the app to transcribe imported videos using a local `faster-whisper` model, store word-level timestamps in SQLite, and display them in a `TranscriptViewer` component.
 
 ## Context
-This is a **pre-scaffold** repository. No source code, build configs, or tooling exists. The canonical spec lives in `plan.md`. This scaffold must respect the directory boundaries defined there.
+Phase 1 scaffold is live. We have Electron + Vite + React + TS + Tailwind v4 + shadcn/ui + Zustand + better-sqlite3.
+- `electron/main.ts` handles IPC, DB, and window management.
+- `src/renderer/store/useAppStore.ts` manages global state.
+- `src/constants.ts` and `src/types/electron.d.ts` define IPC contracts.
+- No Python backend exists yet.
+
+## Requirements
+1. **Manual trigger**: "Start Transcription" button per project.
+2. **Model**: `faster-whisper` `base` bundled under `assets/models/whisper-base/`.
+3. **Progress**: Streamed to UI via one-way IPC (`main → renderer`).
+4. **Audio extraction option**: UI toggle between:
+   - *"Transcribe video directly (fastest)"*
+   - *"Extract audio first with FFmpeg (most reliable)"*
+5. **Reusable packaging**: Unified `python/build.py` for all PyInstaller builds.
 
 ---
 
-## Directory Layout
+## Architecture Changes
 
+### 1. Python Backend (`python/`)
 ```
-ai-video-clips/
-├── .opencode/
-│   └── .gitignore
-├── AGENTS.md                           ← Updated after scaffold
-├── plan.md                              ← Canonical spec (READ THIS FIRST)
-├── package.json
-├── tsconfig.json                        ← Base TS config
-├── tsconfig.node.json                  ← Node-side config (Vite, Electron main)
-├── vite.config.ts                       ← Vite + Electron plugin config
-├── tailwind.config.js                  ← Tailwind + shadcn theme colors
-├── postcss.config.js                   ← PostCSS for Tailwind
-├── electron/
-│   ├── main.ts                          ← Entry: window mgmt, DB, process spawning
-│   └── preload.ts                      ← Secure IPC bridge
-├── index.html                           ← Renderer entry HTML
-├── src/
-│   ├── renderer/                        ← React frontend
-│   │   ├── App.tsx                      ← Root component
-│   │   ├── main.tsx                     ← React DOM mount
-│   │   ├── index.css                    ← Tailwind directives + CSS vars
-│   │   ├── lib/
-│   │   │   └── utils.ts                 ← cn() helper for shadcn
-│   │   ├── components/
-│   │   │   ├── ui/                      ← shadcn/ui components (installed via CLI)
-│   │   │   ├── ImportZone.tsx          ← Drag-and-drop video import
-│   │   │   ├── Sidebar.tsx             ← Navigation sidebar
-│   │   │   ├── Layout.tsx              ← Main layout (sidebar + content area)
-│   │   │   └── TranscriptViewer.tsx    ← Placeholder for Phase 2
-│   │   ├── store/
-│   │   │   └── useAppStore.ts          ← Zustand global state (minimal)
-│   │   ├── hooks/
-│   │   │   └── useIPC.ts               ← Helper to invoke IPC channels
-│   │   └── pages/
-│   │       └── HomePage.tsx            ← Main page: Import + grid placeholder
-│   ├── types/
-│   │   └── electron.d.ts               ← Shared IPC types (preloads)
-│   └── constants.ts                     ← Key values (versions, paths)
-├── public/                              ← Static assets served by Vite
-├── components.json                      ← shadcn/ui config (auto-gen)
-└── .gitignore                           ← Node modules, dist, .opencode/gitignore
+python/
+├── requirements.txt          # faster-whisper, etc.
+├── build.py                  # Unified PyInstaller builder
+├── download_models.py        # Downloads whisper-base weights to assets/
+├── transcriber.py            # Entrypoint: args → NDJSON progress → final JSON
+└── utils/
+    └── audio_extractor.py    # Optional FFmpeg wrapper for audio extraction
 ```
+
+**`transcriber.py`** CLI contract:
+- `--video-path` (required)
+- `--model-dir` (required, points to `assets/models/whisper-base/`)
+- `--output-json` (required, path to write final transcript)
+- `--extract-audio` (optional flag)
+- Emits progress to stderr in a parseable format: `PROGRESS: 45`
+- Writes final transcript JSON with word-level timestamps:
+  ```json
+  {
+    "segments": [
+      { "start": 0.0, "end": 5.4, "text": "Hello world", "words": [...] }
+    ]
+  }
+  ```
+
+**`build.py`**:
+- Scans a manifest of entrypoints (starting with `transcriber.py`).
+- Generates PyInstaller specs with shared options.
+- Outputs platform-specific binaries to `assets/bin/`.
+- Run via `npm run build:python`.
 
 ---
 
-## Technical Decisions
+### 2. DB Schema Additions
+Add to `projects` table:
+- `transcript_status`: `'idle' | 'extracting_audio' | 'transcribing' | 'completed' | 'failed'`
+- `transcript_json`: `TEXT` (nullable, stores the full transcript blob)
 
-### 1. Build Tooling
-- **Vite** for both renderer and Electron main build via `vite-plugin-electron`.
-- Two build targets: `src/renderer` → browser bundle, `electron/main.ts` → Node bundle.
-- Hot Module Replacement (HMR) enabled for renderer during dev.
+No separate table needed yet; parsing the JSON blob in the renderer is fine for Phase 2.
 
-### 2. TypeScript
-- Strict mode enabled. `noUncheckedIndexedAccess: false` (keeps it pragmatic).
-- Use `type` imports where possible for tree-shaking.
-- Renderer types live in `src/types/electron.d.ts`.
-- Preload script is bundled separately from main.
+---
 
-### 3. Electron Architecture
-- **Main Process (`electron/main.ts`)**:
-  - Spawns BrowserWindow.
-  - Registers IPC handlers (wrappers around Node APIs).
-  - Initializes SQLite DB (`database.sqlite` in userData).
-  - Spawns Python subprocesses (Phase 2+).
-- **Preload Script (`electron/preload.ts`)**:
-  - Exposes only whitelisted channels via `contextBridge.exposeInMainWorld`.
-  - No direct Node API exposure to renderer.
-- **Renderer**:
-  - Communicates via `window.electronAPI` exposed by preload.
-
-### 4. IPC Channels (initial)
+### 3. IPC Contract Expansion
+New channels in `src/constants.ts`:
 ```typescript
-// Request/Response (invoke)
-"db:getProjects": () => Project[]
-"db:createProject": (videoPath: string, metadata: VideoMeta) => Project
-"video:probeMetadata": (videoPath: string) => VideoMeta
-
-// One-way (send)
-"video:importDropped": (filePaths: string[]) => void  // Sent from main on drop
+TRANSCRIPTION_START: "transcription:start"
+TRANSCRIPTION_PROGRESS: "transcription:progress"
+TRANSCRIPTION_COMPLETE: "transcription:complete"
+TRANSCRIPTION_ERROR: "transcription:error"
 ```
 
-### 5. Database Schema (SQLite via `better-sqlite3`)
-Tables to create in main process:
-- `projects`: id, video_path, duration_sec, width, height, fps, created_at, status
-- `clips`: id, project_id, start_ms, end_ms, ai_score, status, created_at
-- `settings`: key, value
-
-### 6. UI Framework
-- **Tailwind CSS** with `@tailwindcss/vite` plugin.
-- **shadcn/ui** CLI-initiated with `neutral` base color, `slate` accent, `radius: 0.5rem`.
-- Components installed: `button`, `card`, `dialog`, `input`, `textarea`, `label`, `separator`, `tooltip`.
-- Theme CSS variables in `index.css`.
-
-### 7. FFmpeg Probing
-- On import, call `ffprobe` via `child_process.execFile` with JSON output (`-print_format json`).
-- Parse `format.duration`, `streams[0].width/height`, `streams[0].r_frame_rate`.
-- Store metadata in DB and send to renderer via IPC.
-
-### 8. Drag & Drop
-- Handle `dragover` and `drop` on a designated zone in renderer.
-- Send file paths to main via IPC.
-- Main validates extension (`.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`) then probes + inserts DB.
-
-### 9. Zustand Store
-Minimal initial state:
+**Critical**: `electron/preload.ts` currently only exposes `invoke()`. One-way push requires adding listener wrappers:
 ```typescript
-interface AppState {
-  projects: Project[];
-  currentProjectId: string | null;
-  isProbing: boolean;
-  probeError: string | null;
-  // Actions (setters)
-}
+onTranscriptionProgress: (callback) => {
+  ipcRenderer.on(IPC_CHANNELS.TRANSCRIPTION_PROGRESS, (_, progress) => callback(progress));
+},
+// ... plus onComplete, onError
 ```
+
+Update `src/types/electron.d.ts` to include these signatures in the global `Window.electronAPI` interface.
 
 ---
 
-## Setup Steps
+### 4. Main Process Logic (`electron/main.ts`)
+New handler: `transcription:start`
+1. Look up project in DB → get `video_path`.
+2. Determine working audio path (original video, or temp WAV if `--extract-audio`).
+3. Spawn `assets/bin/transcriber` with args.
+4. Parse stderr for `PROGRESS: XX` → `mainWindow.webContents.send('transcription:progress', { projectId, percent })`.
+5. On exit 0: read output JSON, update DB (`transcript_json`, `transcript_status='completed'`), emit `transcription:complete`.
+6. On error: emit `transcription:error`, update DB `transcript_status='failed'`.
 
-### Step 1 — Init core packages
-- Install: `electron`, `vite`, `@vitejs/plugin-react`, `vite-plugin-electron`, `react`, `react-dom`, `typescript`, `@types/react`, `@types/react-dom`, `@types/node`, `tailwindcss`, `@tailwindcss/vite` (or `autoprefixer` + `postcss`), `clsx`, `tailwind-merge`, `zustand`, `better-sqlite3`, `@types/better-sqlite3`.
-- Configure `package.json` with `scripts: dev`, `build`, `preview`, `lint`, `typecheck`, `db:migrate`.
+Process lifecycle: track active child processes; kill them on `window-all-closed` if needed.
 
-### Step 2 — Configure tooling
-- `vite.config.ts` with `vite-plugin-electron`, dual entry points, alias `@/` to `src/`.
-- `tsconfig.json` strict + moduleResolution bundler, paths alias.
-- `tailwind.config.js` extend theme with CSS vars for shadcn.
-- `components.json` with baseColor neutral, neutral style, aliases pointing to `src/renderer/components/ui`, lib `src/renderer/lib`.
+---
 
-### Step 3 — Scaffold entry files
-- `index.html` points to `src/renderer/main.tsx`.
-- `src/renderer/main.tsx` mounts `<App />` inside root div.
-- `src/renderer/App.tsx` sets up `<Layout />` with `<Sidebar />` and `<HomePage />`.
+### 5. Renderer UI Components
 
-### Step 4 — Implement IPC Bridge
-- Define shared IPC types in `src/types/electron.d.ts`.
-- Write `electron/preload.ts` exposing typed API object.
-- Write `electron/main.ts` registering IPC handlers and window setup.
+**`TranscriptionControls.tsx`** (placed on `HomePage` or future `ProjectPage`):
+- "Start Transcription" button (disabled if `transcript_status` is active).
+- Select dropdown:
+  - *"Transcribe video directly (fastest)"*
+  - *"Extract audio first with FFmpeg (most reliable)"*
+- Status text + progress bar when running.
 
-### Step 5 — Implement DB initialization
-- In `electron/main.ts`, ensure `app.whenReady()` initializes SQLite tables if absent.
-- Use `app.getPath('userData')` as DB directory.
-- Wrap raw SQL in helper module.
+**`TranscriptViewer.tsx`**:
+- Reads `transcript_json` from the selected project.
+- Renders segments/words in a scrollable list (shadcn `ScrollArea`).
+- Clicking a word logs the timestamp (placeholder for future video seeking).
 
-### Step 6 — Implement video import
-- `ImportZone` component: styled drop zone with SVG icon.
-- IPC channel: `video:import` sends array of file paths.
-- Main handler: validate extensions → ffprobe → insert project → respond.
-- `Sidebar` shows project list fetched via `db:getProjects`.
-- `HomePage` displays import status and current project placeholder.
+**Zustand store updates (`useAppStore.ts`)**:
+- `transcriptionProgress: Record<string, number>` (per-project percent).
+- `startTranscription(projectId, extractAudio)`.
+- `setTranscriptionProgress(projectId, percent)`.
+- Subscribe to preload listeners on store init.
 
-### Step 7 — Verify
-- `npm run dev` launches Electron window.
-- HMR works on renderer code changes.
-- Dropping a video triggers probe + DB insert.
-- App renders sidebar + main area without runtime errors.
+---
+
+### 6. Asset & Build Configuration
+- **Model download**: `npm run download:models` fetches `Systran/faster-whisper-base` into `assets/models/whisper-base/`. (Not checked into git.)
+- **Python build**: `npm run build:python` compiles `transcriber.py` → `assets/bin/transcriber`.
+- **electron-builder.yml**: Add `assets/models/` and `assets/bin/` to `extraResources`.
+- **`.gitignore`**: Ignore `assets/models/*`, `assets/bin/*`, but keep `.gitkeep` in both dirs.
+
+---
+
+## Task Breakdown
+
+1. **Python scaffold**: `python/requirements.txt`, `transcriber.py` prototype, `download_models.py`.
+2. **Model download**: Run script, verify `assets/models/whisper-base/` exists.
+3. **Audio extractor util**: Small FFmpeg wrapper in `python/utils/audio_extractor.py`.
+4. **PyInstaller builder**: `python/build.py` producing `assets/bin/transcriber`.
+5. **IPC expansion**: Constants, types, preload listeners.
+6. **DB migration**: `ALTER TABLE` additions in `initDatabase()`.
+7. **Main transcription handler**: Spawn, parse, progress push, DB update.
+8. **Renderer components**: `TranscriptionControls`, `TranscriptViewer`.
+9. **Zustand wiring**: Per-project transcription state + listener setup.
+10. **Builder config**: Update `electron-builder.yml`, add npm scripts.
+11. **Verification**: End-to-end test with a sample video.
 
 ---
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
-|------|------------|
-| `vite-plugin-electron` version churn causing API drift | Pin to latest stable, follow official quickstart example. |
-| Native module (`better-sqlite3`) compile failure in Electron | Ensure rebuild after install; use `electron-rebuild` if needed. |
-| Tailwind v4 config format vs v3 | If `create-tailwind` defaults to v4, adapt import syntax accordingly. |
-| shadcn CLI + Vite HMR conflicts | Use manual component copy if CLI fails; source from shadcn registry. |
+|---|---|
+| PyInstaller output is huge | Bundle only `base` model; compress with UPX if needed. |
+| CPU transcription is slow | Show honest progress; allow future GPU settings. |
+| FFmpeg audio extraction adds overhead | Make it optional; user chooses. |
+| Preload security expansion | Only whitelist the 3 new channels; keep `contextIsolation=true`. |
 
 ---
 
 ## Success Criteria
-- [ ] `npm run dev` opens Electron window with Tailwind styles.
-- [ ] Sidebar and main content layout renders.
-- [ ] Dropping a video file populates DB and shows metadata.
-- [ ] No TypeScript compilation errors.
-- [ ] `npm run build` produces distributable Electron app.
+- [ ] `npm run build:python` produces a working `transcriber` executable.
+- [ ] Clicking "Start Transcription" on a project triggers the pipeline.
+- [ ] Progress percentage updates the UI in real time.
+- [ ] Final transcript JSON is saved to SQLite.
+- [ ] `TranscriptViewer` renders word-level timestamps.
+- [ ] Both "direct" and "extract audio" modes work correctly.

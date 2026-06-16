@@ -1,8 +1,14 @@
 import ImportZone from "@/renderer/components/ImportZone";
+import TranscriptionControls from "@/renderer/components/TranscriptionControls";
+import TranscriptViewer from "@/renderer/components/TranscriptViewer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/renderer/components/ui/card";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import { formatDuration } from "@/renderer/lib/utils";
 
+/**
+ * Home page: project grid, import zone, and the transcription workflow
+ * for the currently selected project.
+ */
 export default function HomePage() {
   const projects = useAppStore((state) => state.projects);
   const currentProjectId = useAppStore((state) => state.currentProjectId);
@@ -48,6 +54,13 @@ export default function HomePage() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {currentProjectId && (
+        <div className="space-y-6">
+          <TranscriptionControls projectId={currentProjectId} />
+          <TranscriptViewer projectId={currentProjectId} />
         </div>
       )}
     </div>

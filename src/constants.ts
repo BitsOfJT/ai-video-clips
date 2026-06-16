@@ -7,9 +7,20 @@ export const IPC_CHANNELS = {
   VIDEO_PROBE_METADATA: "video:probeMetadata",
   DB_GET_PROJECTS: "db:getProjects",
   DB_CREATE_PROJECT: "db:createProject",
+  TRANSCRIPTION_START: "transcription:start",
+  TRANSCRIPTION_PROGRESS: "transcription:progress",
+  TRANSCRIPTION_COMPLETE: "transcription:complete",
+  TRANSCRIPTION_ERROR: "transcription:error",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
+
+// List of one-way channels used in preload listener setup
+export const ONE_WAY_IPC_CHANNELS = [
+  IPC_CHANNELS.TRANSCRIPTION_PROGRESS,
+  IPC_CHANNELS.TRANSCRIPTION_COMPLETE,
+  IPC_CHANNELS.TRANSCRIPTION_ERROR,
+] as const;
 
 export const WINDOW = {
   WIDTH: 1400,

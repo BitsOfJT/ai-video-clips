@@ -9,3 +9,10 @@ out/
 .env.local
 .vscode/
 .idea/
+assets/models/*
+!assets/models/.gitkeep
+assets/bin/*
+!assets/bin/.gitkeep
+venv/
+__pycache__/
+*.pyc

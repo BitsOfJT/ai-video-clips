@@ -1,8 +1,9 @@
-import { access, constants as fsConstants } from "node:fs";
+import { access, constants as fsConstants, existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, ipcMain } from "electron";
 import Database from "better-sqlite3";
@@ -16,6 +17,9 @@ const execFileAsync = promisify(execFile);
 let mainWindow: BrowserWindow | null = null;
 let db: Database.Database | null = null;
 let probeInProgress = false;
+
+// Track active transcription child processes so they can be cleaned up on quit
+const activeTranscriptions = new Map<string, ChildProcess>();
 
 // ------------------------------------------------------------------------------
 // Window Management
@@ -104,6 +108,18 @@ function initDatabase(): Database.Database {
     );
   `);
 
+  // Migrate: add transcript columns if missing
+  const projectColumns = database.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>;
+  const hasTranscriptStatus = projectColumns.some((c) => c.name === "transcript_status");
+  const hasTranscriptJson = projectColumns.some((c) => c.name === "transcript_json");
+
+  if (!hasTranscriptStatus) {
+    database.exec(`ALTER TABLE projects ADD COLUMN transcript_status TEXT DEFAULT 'idle';`);
+  }
+  if (!hasTranscriptJson) {
+    database.exec(`ALTER TABLE projects ADD COLUMN transcript_json TEXT;`);
+  }
+
   return database;
 }
 
@@ -112,6 +128,36 @@ function requireDatabase(): Database.Database {
     throw new Error("Database not initialized");
   }
   return db;
+}
+
+// ------------------------------------------------------------------------------
+// Transcription
+// ------------------------------------------------------------------------------
+
+/**
+ * Returns the absolute path to the bundled transcriber binary.
+ * In development, uses the built binary in assets/bin/ relative to the source tree.
+ * In production, uses the binary bundled via extraResources.
+ */
+function getTranscriberPath(): string {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  const base = isDev
+    ? path.join(__dirname, "../../assets/bin/transcriber")
+    : path.join(process.resourcesPath, "assets", "bin", "transcriber");
+  return process.platform === "win32" ? `${base}.exe` : base;
+}
+
+/**
+ * Returns the absolute path to the bundled Whisper model directory.
+ * In development, uses assets/models/whisper-base/ relative to the source tree.
+ * In production, uses the model bundled via extraResources.
+ */
+function getModelPath(): string {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  if (isDev) {
+    return path.join(__dirname, "../../assets/models/whisper-base");
+  }
+  return path.join(process.resourcesPath, "assets", "models", "whisper-base");
 }
 
 // ------------------------------------------------------------------------------
@@ -214,7 +260,7 @@ function registerIpcHandlers(): void {
     const database = requireDatabase();
     return database
       .prepare(
-        "SELECT id, video_path, title, duration_sec, width, height, fps, status, created_at FROM projects ORDER BY created_at DESC"
+        "SELECT id, video_path, title, duration_sec, width, height, fps, status, transcript_status, transcript_json, created_at FROM projects ORDER BY created_at DESC"
       )
       .all() as Project[];
   });
@@ -245,6 +291,119 @@ function registerIpcHandlers(): void {
     const row = database.prepare("SELECT * FROM projects WHERE id = ?").get(id) as Project;
     return row;
   });
+  ipcMain.handle(IPC_CHANNELS.TRANSCRIPTION_START, async (_event, projectId: string, extractAudio: boolean): Promise<void> => {
+    const database = requireDatabase();
+    const project = database
+      .prepare("SELECT video_path FROM projects WHERE id = ?")
+      .get(projectId) as { video_path: string } | undefined;
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Prevent concurrent transcription runs for the same project
+    if (activeTranscriptions.has(projectId)) {
+      throw new Error("Transcription already in progress for this project");
+    }
+
+    // Re-validate the video path for security before passing it to the child process
+    const resolvedVideoPath = await validateVideoPath(project.video_path);
+
+    const transcriberPath = getTranscriberPath();
+    if (!existsSync(transcriberPath)) {
+      throw new Error(
+        `Transcriber binary not found at ${transcriberPath}. ` +
+        "Run 'npm run build:python' to build it."
+      );
+    }
+
+    const modelPath = getModelPath();
+    const outputJson = path.join(app.getPath("userData"), `transcript-${projectId}.json`);
+
+    // Set the initial running status so the UI can reflect it immediately
+    database
+      .prepare("UPDATE projects SET transcript_status = ? WHERE id = ?")
+      .run(extractAudio ? "extracting_audio" : "transcribing", projectId);
+
+    const args = ["--video-path", resolvedVideoPath, "--model-dir", modelPath, "--output-json", outputJson];
+    if (extractAudio) {
+      args.push("--extract-audio");
+    }
+
+    const child = spawn(transcriberPath, args, { detached: false });
+    activeTranscriptions.set(projectId, child);
+
+    // Parse stderr for PROGRESS: XX lines and forward them to the renderer
+    let stderrBuffer = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderrBuffer += chunk.toString();
+      const lines = stderrBuffer.split("\n");
+      stderrBuffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const match = line.match(/^PROGRESS:\s*(\d+)/);
+        if (match) {
+          const percent = parseInt(match[1], 10);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_PROGRESS, { projectId, percent });
+          }
+        }
+      }
+    });
+
+    return new Promise<void>((resolve, reject) => {
+      child.on("exit", async (code) => {
+        activeTranscriptions.delete(projectId);
+
+        if (code !== 0) {
+          database.prepare("UPDATE projects SET transcript_status = 'failed' WHERE id = ?").run(projectId);
+          const exitMessage = `Transcription exited with code ${code ?? "unknown"}`;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_ERROR, {
+              projectId,
+              error: exitMessage,
+            });
+          }
+          reject(new Error(exitMessage));
+          return;
+        }
+
+        // Read the final transcript JSON from disk and persist it in the DB
+        try {
+          const transcriptJson = await readFile(outputJson, "utf-8");
+          database
+            .prepare("UPDATE projects SET transcript_status = 'completed', transcript_json = ? WHERE id = ?")
+            .run(transcriptJson, projectId);
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_COMPLETE, { projectId });
+          }
+          resolve();
+        } catch (err) {
+          database.prepare("UPDATE projects SET transcript_status = 'failed' WHERE id = ?").run(projectId);
+          // Sanitize the error before sending it to the renderer to avoid leaking system paths
+          const sanitizedMessage = "Failed to read transcription output. The file may have been deleted or corrupted.";
+          console.error("Transcript read error:", err);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_ERROR, {
+              projectId,
+              error: sanitizedMessage,
+            });
+          }
+          reject(new Error(sanitizedMessage));
+        }
+      });
+
+      child.on("error", (err) => {
+        activeTranscriptions.delete(projectId);
+        database.prepare("UPDATE projects SET transcript_status = 'failed' WHERE id = ?").run(projectId);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_ERROR, { projectId, error: err.message });
+        }
+        reject(err);
+      });
+    });
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -266,5 +425,12 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+// Ensure any running transcription child processes are terminated when the app quits
+app.on("before-quit", () => {
+  for (const [, child] of activeTranscriptions) {
+    child.kill();
   }
 });

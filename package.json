@@ -10,10 +10,19 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/test-transcriber.js",
+    "test:python": "python3 -m pytest python/tests/ -v",
+    "download:models": "python3 python/download_models.py",
+    "build:python": "python3 python/build.py"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.9",
+    "@radix-ui/react-progress": "^1.1.10",
+    "@radix-ui/react-scroll-area": "^1.2.12",
+    "@radix-ui/react-select": "^2.3.1",
     "@radix-ui/react-separator": "^1.1.9",
     "@radix-ui/react-slot": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.2.9",
@@ -47,6 +56,7 @@
     "typescript-eslint": "^8.61.0",
     "vite": "^6.2.0",
     "vite-plugin-electron": "^0.29.0",
-    "vite-plugin-electron-renderer": "^0.14.6"
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^4.1.9"
   }
 }
