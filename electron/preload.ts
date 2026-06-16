@@ -27,6 +27,17 @@ const electronAPI = {
   onTranscriptionError: (callback: (payload: { projectId: string; error: string }) => void) => {
     ipcRenderer.on(IPC_CHANNELS.TRANSCRIPTION_ERROR, (_, payload) => callback(payload));
   },
+  onAnalysisProgress: (
+    callback: (payload: { projectId: string; percent: number; stage: string }) => void
+  ) => {
+    ipcRenderer.on(IPC_CHANNELS.ANALYSIS_PROGRESS, (_, payload) => callback(payload));
+  },
+  onAnalysisComplete: (callback: (payload: { projectId: string }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.ANALYSIS_COMPLETE, (_, payload) => callback(payload));
+  },
+  onAnalysisError: (callback: (payload: { projectId: string; error: string }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.ANALYSIS_ERROR, (_, payload) => callback(payload));
+  },
   removeAllListeners: (channel: Channel) => {
     if (validChannels.includes(channel)) {
       ipcRenderer.removeAllListeners(channel);

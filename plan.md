@@ -10,7 +10,7 @@ A cross-platform desktop application that takes long-form videos and uses AI to 
 
 1. **Import**: User drags and drops a local video file into the app.
 2. **Creative Brief**: User describes what kind of clips they want (action, funny, emotional, tutorial, etc.).
-3. **Video Type Selection**: User picks the content type (Podcast/Livestream vs. Vlog/Short-form) to optimize chunking strategy.
+3. **Video Type Selection**: User picks the content type (Podcast/Livestream vs. Vlog/Short-form vs. Gaming etc.) to optimize chunking strategy.
 4. **Transcription**: Local AI transcribes the entire video with millisecond-level word timestamps.
 5. **AI Analysis**: The video is chunked into candidate segments. An AI model (Gemini or local Ollama) rates each segment based on the user's creative brief.
 6. **Ranking**: Segments are scored by a composite algorithm (AI relevance + audio energy + visual dynamism + speech density).
@@ -158,37 +158,39 @@ Clips are sorted by final score and presented in a "Top Picks" grid.
 
 ## Development Phases
 
-### Phase 1: Project Scaffold
-- [ ] Initialize Electron + Vite + React + TypeScript project.
-- [ ] Configure Tailwind CSS and shadcn/ui.
-- [ ] Set up Zustand store and SQLite schema (projects, videos, clips).
-- [ ] Implement drag-and-drop video import.
-- [ ] Probe video metadata (duration, resolution, FPS) using bundled FFmpeg.
-- [ ] Basic layout: sidebar navigation + main content area.
+### Phase 1: Project Scaffold ✅ COMPLETE
+- [x] Initialize Electron + Vite + React + TypeScript project.
+- [x] Configure Tailwind CSS and shadcn/ui.
+- [x] Set up Zustand store and SQLite schema (projects, videos, clips).
+- [x] Implement drag-and-drop video import.
+- [x] Probe video metadata (duration, resolution, FPS) using bundled FFmpeg.
+- [x] Basic layout: sidebar navigation + main content area.
 
-### Phase 2: Transcription Pipeline
-- [ ] Package `transcriber.py` (faster-whisper) as a standalone executable.
-- [ ] Spawn transcriber from Electron main process on video import.
-- [ ] Stream progress back to renderer via IPC.
-- [ ] Store transcript in SQLite with word-level timestamps.
-- [ ] Build `TranscriptViewer` component (clickable words seek video).
+### Phase 2: Transcription Pipeline ✅ COMPLETE
+- [x] Package `transcriber.py` (faster-whisper) as a standalone executable.
+- [x] Spawn transcriber from Electron main process on video import.
+- [x] Stream progress back to renderer via IPC.
+- [x] Store transcript in SQLite with word-level timestamps.
+- [x] Build `TranscriptViewer` component (clickable words seek video).
 
-### Phase 3: Creative Brief & Analysis
-- [ ] Build `CreativeBriefInput` component (text area + preset buttons).
-- [ ] Build `VideoTypeSelector` component (Podcast vs. Vlog).
-- [ ] Package `chunker.py` and `analyzer.py` as executables.
-- [ ] Implement chunking logic based on video type.
-- [ ] Build Gemini prompt template incorporating creative brief.
-- [ ] Implement Gemini API client with rate-limit awareness.
-- [ ] Implement Ollama local fallback client.
-- [ ] Display AI-generated clip suggestions in `ClipGrid`.
+### Phase 3: Creative Brief & Analysis ✅ COMPLETE
+- [x] Build `CreativeBriefInput` component (text area + preset buttons).
+- [x] Build `VideoTypeSelector` component (Podcast vs. Vlog).
+- [x] Implement chunker + analyzer in the **Electron main process (TypeScript)**, not as Python executables (they are just transcript-slicing + HTTP/JSON; keeps the API key in one place and satisfies the renderer CSP).
+- [x] Implement chunking logic based on video type (sentence/pause-boundary aware so clips never cut mid-sentence).
+- [x] Build AI prompt template incorporating creative brief (shared across providers, enforced structured JSON output).
+- [x] Implement Gemini API client (free tier, rate-limit aware, structured output).
+- [x] Implement Ollama local client — now the **default provider** (fully local/offline, no API key), so users never depend on a Gemini free tier.
+- [x] Two-pass analysis: batched text scoring → shortlist → keyframe vision refinement (full vision support in v1).
+- [x] Display AI-generated clip suggestions in `ClipGrid`.
+- [x] Minimal Settings panel (provider + encrypted API key) pulled forward from Phase 6.
 
 ### Phase 4: Ranking & Preview
 - [ ] Implement `ranker.py` (composite scoring algorithm).
 - [ ] Calculate audio energy and visual dynamism for each chunk.
-- [ ] Sort clips by final score and render in grid.
-- [ ] Generate clip thumbnails using FFmpeg frame extraction.
-- [ ] Build `ClipCard` with AI title, description, and score badge.
+- [ ] Sort clips by final score and render in grid. *(AI-score sorting + grid rendering already done in Phase 3; composite scoring still pending.)*
+- [ ] Generate clip thumbnails using FFmpeg frame extraction. *(Keyframe extraction exists in `electron/analysis/keyframes.ts` for the vision pass; preview thumbnails still pending.)*
+- [x] Build `ClipCard` with AI title, description, and score badge (with per-criterion breakdown).
 - [ ] Build `PreviewPlayer` with 9:16 crop simulation overlay.
 
 ### Phase 5: Auto-Edit & Export
@@ -200,7 +202,7 @@ Clips are sorted by final score and presented in a "Top Picks" grid.
 - [ ] Save exported clips to user-selected output folder.
 
 ### Phase 6: Polish & Cross-Platform Packaging
-- [ ] Settings panel: API keys, Ollama toggle, FFmpeg path override.
+- [ ] Settings panel: API keys, Ollama toggle, FFmpeg path override. *(Provider selector + encrypted Gemini key + Ollama URL/models shipped in Phase 3; FFmpeg path override still pending.)*
 - [ ] Error handling and logging for all Python subprocesses.
 - [ ] macOS `.dmg` packaging.
 - [ ] Windows `.exe` packaging (Inno Setup or NSIS installer).
@@ -256,11 +258,11 @@ Similar structure adapted for text-based vision models. The prompt includes a de
 | Task | Solution | Cost |
 |------|----------|------|
 | Transcription | faster-whisper (local) | **$0** forever |
-| Clip Analysis | Google Gemini 2.5 Flash (free tier) | **$0** (1,500 req/day) |
-| Local Fallback | Ollama + vision model | **$0** (uses your own RAM/GPU, offline) |
+| Clip Analysis (default) | Ollama + local models | **$0** (uses your own RAM/GPU, offline, no limits) |
+| Clip Analysis (optional) | Google Gemini Flash (free tier) | **$0** (free-tier daily/RPM limits apply) |
 | Captions | Derived from local transcript | **$0** forever |
 
-For a 30-minute video, expect ~20 candidate segments. Well within Gemini's free limit. Users can switch to Ollama for bulk processing.
+**Ollama is the default provider** so users never have to worry about changing Gemini "free tiers" — analysis works fully offline out of the box. Gemini is an optional opt-in (paste a free API key in Settings) for users who prefer cloud quality. For a 30-minute video, expect ~20 candidate segments; the two-pass flow keeps Gemini requests minimal if used.
 
 ---
 
