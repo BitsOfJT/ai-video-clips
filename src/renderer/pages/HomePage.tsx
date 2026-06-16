@@ -1,6 +1,7 @@
 import ImportZone from "@/renderer/components/ImportZone";
 import TranscriptionControls from "@/renderer/components/TranscriptionControls";
 import TranscriptViewer from "@/renderer/components/TranscriptViewer";
+import AnalysisControls from "@/renderer/components/AnalysisControls";
 import { Card, CardContent, CardHeader, CardTitle } from "@/renderer/components/ui/card";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import { formatDuration } from "@/renderer/lib/utils";
@@ -61,6 +62,7 @@ export default function HomePage() {
         <div className="space-y-6">
           <TranscriptionControls projectId={currentProjectId} />
           <TranscriptViewer projectId={currentProjectId} />
+          <AnalysisControls projectId={currentProjectId} />
         </div>
       )}
     </div>

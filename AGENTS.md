@@ -3,6 +3,7 @@
 ## Project State
 - **Phase 1 scaffold is LIVE.** Electron + Vite + React + TypeScript + Tailwind v4 + shadcn/ui + Zustand + better-sqlite3.
 - **Phase 2 (Transcription Pipeline) is COMPLETE.** faster-whisper integration, audio extraction, progress streaming, PyInstaller build.
+- **Phase 3 (Creative Brief & AI Analysis) is COMPLETE.** Sentence/pause-boundary chunking, pluggable AI providers (Ollama default + Gemini), two-pass text→vision scoring, encrypted settings, clip grid. **Chunking + analysis run in the Electron main process (TypeScript), not Python** — see `electron/analysis/`. **Ollama is the default provider** (local/offline, no API key); Gemini is optional opt-in. AI network calls must originate from the main process (renderer CSP is `connect-src 'self'`).
 - The canonical spec is [`plan.md`](./plan.md). Read it before making architectural decisions.
 
 ## Quick Commands
@@ -20,7 +21,7 @@ npm run test:python # Pytest for Python utilities
 - **Electron Main** (`electron/main.ts`): Window mgmt, DB init (`better-sqlite3`), IPC handlers, FFmpeg `ffprobe` spawning, transcription child process management.
 - **Preload** (`electron/preload.ts`): Secure `contextBridge` exposing only whitelisted IPC channels via `window.electronAPI`. Also exposes one-way listeners for transcription progress streaming.
 - **Renderer** (`src/renderer/`): React frontend. Tailwind v4 + shadcn/ui. Dark theme default (`class="dark"` on `<html>`).
-- **Python Backend** (`python/`): `transcriber.py` (faster-whisper entrypoint), `audio_extractor.py` (FFmpeg-based WAV extraction), `build.py` (PyInstaller builder), `download_models.py` (model downloader).
+- **Python Backend** (`python/`): `transcriber.py` (faster-whisper entrypoint), `utils/audio_extractor.py` (FFmpeg-based WAV extraction), `build.py` (PyInstaller builder), `download_models.py` (model downloader).
 - **Bundled Assets**: `assets/models/whisper-base/` (faster-whisper model files), `assets/bin/transcriber` (PyInstaller-built standalone executable).
 - **IPC Channels** (single source of truth in `src/constants.ts`):
   - `video:probeMetadata` — runs `ffprobe`, returns `{ durationSec, width, height, fps }`
@@ -106,7 +107,7 @@ npm run test:python # Pytest for Python utilities
 | `index.html` | Renderer entry HTML; applies `class="dark"` for default dark mode |
 | `.gitignore` | Excludes `dist/`, `dist-electron/`, `*.sqlite`, `out/` |
 | `python/transcriber.py` | faster-whisper entrypoint; emits `PROGRESS: XX` to stderr |
-| `python/audio_extractor.py` | FFmpeg-based WAV extraction for transcription |
+| `python/utils/audio_extractor.py` | FFmpeg-based WAV extraction for transcription |
 | `python/build.py` | PyInstaller builder for standalone executables |
 | `python/download_models.py` | Downloads whisper-base to assets/models/ |
 | `vitest.config.ts` | Vitest test config extending Vite |

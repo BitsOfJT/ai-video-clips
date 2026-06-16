@@ -1,17 +1,34 @@
 import { create } from "zustand";
-import type { Project, VideoMetadata } from "@/types/electron";
+import type {
+  Project,
+  VideoMetadata,
+  Clip,
+  AppSettings,
+  UpdateSettingsInput,
+  StartAnalysisInput,
+  AnalysisStatus,
+} from "@/types/electron";
 import { IPC_CHANNELS } from "@/constants";
 
 type ElectronChannel = import("@/types/electron").ElectronChannel;
 
+export type AppView = "home" | "settings";
+
 interface AppState {
   projects: Project[];
   currentProjectId: string | null;
+  view: AppView;
+  setView: (view: AppView) => void;
   isImporting: boolean;
   importError: string | null;
   loadError: string | null;
   transcriptionProgress: Record<string, number>; // projectId -> percent
   transcriptionError: Record<string, string>;   // projectId -> error message
+  analysisProgress: Record<string, number>;      // projectId -> percent
+  analysisStage: Record<string, AnalysisStatus>; // projectId -> stage
+  analysisError: Record<string, string>;         // projectId -> error message
+  clips: Record<string, Clip[]>;                 // projectId -> clips
+  settings: AppSettings | null;
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
   loadProjects: () => Promise<void>;
@@ -21,6 +38,10 @@ interface AppState {
   setTranscriptionError: (projectId: string, error: string | null) => void;
   updateProjectTranscript: (projectId: string, transcriptJson: string) => void;
   clearTranscriptionState: (projectId: string) => void;
+  startAnalysis: (input: StartAnalysisInput) => Promise<void>;
+  loadClips: (projectId: string) => Promise<void>;
+  loadSettings: () => Promise<void>;
+  saveSettings: (input: UpdateSettingsInput) => Promise<void>;
 }
 
 async function invokeIpc<T>(channel: ElectronChannel, ...args: unknown[]): Promise<T> {
@@ -57,16 +78,54 @@ export const useAppStore = create<AppState>((set, get) => {
         transcriptionProgress: { ...state.transcriptionProgress, [payload.projectId]: 0 },
       }));
     });
+
+    window.electronAPI.onAnalysisProgress((payload) => {
+      set((state) => ({
+        analysisProgress: { ...state.analysisProgress, [payload.projectId]: payload.percent },
+        analysisStage: { ...state.analysisStage, [payload.projectId]: payload.stage as AnalysisStatus },
+      }));
+    });
+
+    window.electronAPI.onAnalysisComplete((payload) => {
+      set((state) => {
+        const nextProgress = { ...state.analysisProgress };
+        delete nextProgress[payload.projectId];
+        const nextStage = { ...state.analysisStage };
+        delete nextStage[payload.projectId];
+        return { analysisProgress: nextProgress, analysisStage: nextStage };
+      });
+      // Load the freshly persisted clips and refresh project status.
+      void get().loadClips(payload.projectId);
+      void get().loadProjects();
+    });
+
+    window.electronAPI.onAnalysisError((payload) => {
+      set((state) => {
+        const nextProgress = { ...state.analysisProgress };
+        delete nextProgress[payload.projectId];
+        return {
+          analysisError: { ...state.analysisError, [payload.projectId]: payload.error },
+          analysisProgress: nextProgress,
+        };
+      });
+    });
   }
 
   return {
     projects: [],
     currentProjectId: null,
+    view: "home",
+    setView: (view) => set({ view }),
     isImporting: false,
     importError: null,
     loadError: null,
     transcriptionProgress: {},
     transcriptionError: {},
+    analysisProgress: {},
+    analysisStage: {},
+    analysisError: {},
+    clips: {},
+    settings: null,
 
     setProjects: (projects) => set({ projects }),
 
@@ -153,5 +212,52 @@ export const useAppStore = create<AppState>((set, get) => {
         delete nextError[projectId];
         return { transcriptionProgress: nextProgress, transcriptionError: nextError };
       }),
+
+    startAnalysis: async (input: StartAnalysisInput) => {
+      set((state) => ({
+        analysisProgress: { ...state.analysisProgress, [input.projectId]: 0 },
+        analysisStage: { ...state.analysisStage, [input.projectId]: "chunking" },
+        analysisError: { ...state.analysisError, [input.projectId]: "" },
+      }));
+
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.ANALYSIS_START, input);
+      } catch (error) {
+        set((state) => {
+          const nextProgress = { ...state.analysisProgress };
+          delete nextProgress[input.projectId];
+          return {
+            analysisError: {
+              ...state.analysisError,
+              [input.projectId]: error instanceof Error ? error.message : "Analysis failed",
+            },
+            analysisProgress: nextProgress,
+          };
+        });
+      }
+    },
+
+    loadClips: async (projectId: string) => {
+      try {
+        const clips = await invokeIpc<Clip[]>(IPC_CHANNELS.DB_GET_CLIPS, projectId);
+        set((state) => ({ clips: { ...state.clips, [projectId]: clips } }));
+      } catch {
+        // Non-fatal: the grid simply stays empty if clips cannot be loaded.
+      }
+    },
+
+    loadSettings: async () => {
+      try {
+        const settings = await invokeIpc<AppSettings>(IPC_CHANNELS.SETTINGS_GET);
+        set({ settings });
+      } catch {
+        // Ignore; Settings panel will show defaults.
+      }
+    },
+
+    saveSettings: async (input: UpdateSettingsInput) => {
+      const settings = await invokeIpc<AppSettings>(IPC_CHANNELS.SETTINGS_SET, input);
+      set({ settings });
+    },
   };
 });

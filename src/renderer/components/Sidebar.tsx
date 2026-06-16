@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Film, Plus } from "lucide-react";
+import { Film, Plus, Settings } from "lucide-react";
 import { cn } from "@/renderer/lib/utils";
 import { Button } from "@/renderer/components/ui/button";
 import { useAppStore } from "@/renderer/store/useAppStore";
@@ -9,10 +9,17 @@ export default function Sidebar() {
   const currentProjectId = useAppStore((state) => state.currentProjectId);
   const setCurrentProjectId = useAppStore((state) => state.setCurrentProjectId);
   const loadProjects = useAppStore((state) => state.loadProjects);
+  const view = useAppStore((state) => state.view);
+  const setView = useAppStore((state) => state.setView);
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  const selectProject = (id: string) => {
+    setCurrentProjectId(id);
+    setView("home");
+  };
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-border bg-card">
@@ -40,10 +47,10 @@ export default function Sidebar() {
             projects.map((project) => (
               <button
                 key={project.id}
-                onClick={() => setCurrentProjectId(project.id)}
+                onClick={() => selectProject(project.id)}
                 className={cn(
                   "w-full rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent",
-                  currentProjectId === project.id && "bg-accent"
+                  view === "home" && currentProjectId === project.id && "bg-accent"
                 )}
               >
                 <div className="truncate font-medium">
@@ -61,6 +68,19 @@ export default function Sidebar() {
             ))
           )}
         </div>
+      </div>
+
+      <div className="border-t border-border p-3">
+        <button
+          onClick={() => setView("settings")}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent",
+            view === "settings" && "bg-accent"
+          )}
+        >
+          <Settings className="h-4 w-4" />
+          Settings
+        </button>
       </div>
     </aside>
   );
