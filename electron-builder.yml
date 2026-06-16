@@ -1,0 +1,24 @@
+appId: com.example.ai-video-clipper
+productName: AI Video Clipper
+copyright: Copyright © 2026
+directories:
+  output: out
+files:
+  - dist-electron/main/main.js
+  - dist-electron/preload/preload.js
+  - dist/**
+  - package.json
+extraResources:
+  - from: assets
+    to: assets
+    filter:
+      - '**/*'
+mac:
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch: arm64
+win:
+  target:
+    - target: nsis
+      arch: x64
