@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/ren
 import CreativeBriefInput from "@/renderer/components/CreativeBriefInput";
 import VideoTypeSelector from "@/renderer/components/VideoTypeSelector";
 import ClipGrid from "@/renderer/components/ClipGrid";
+import PreviewPlayer from "@/renderer/components/PreviewPlayer";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { AnalysisStatus, VideoType } from "@/types/electron";
 
@@ -36,6 +37,8 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
   const stage = useAppStore((state) => state.analysisStage[projectId]);
   const error = useAppStore((state) => state.analysisError[projectId]);
   const clips = useAppStore((state) => state.clips[projectId]) ?? [];
+  const selectedClipId = useAppStore((state) => state.selectedClipId);
+  const setSelectedClipId = useAppStore((state) => state.setSelectedClipId);
 
   const [brief, setBrief] = useState(project?.creative_brief ?? "");
   const [videoType, setVideoType] = useState<VideoType>(project?.video_type ?? "podcast");
@@ -108,6 +111,17 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
         )}
 
         <ClipGrid clips={clips} />
+
+        {selectedClipId && project && (() => {
+          const selectedClip = clips.find((c) => c.id === selectedClipId);
+          return selectedClip ? (
+            <PreviewPlayer
+              clip={selectedClip}
+              project={project}
+              onClose={() => setSelectedClipId(null)}
+            />
+          ) : null;
+        })()}
       </CardContent>
     </Card>
   );

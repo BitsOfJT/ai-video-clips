@@ -29,6 +29,8 @@ interface AppState {
   analysisError: Record<string, string>;         // projectId -> error message
   clips: Record<string, Clip[]>;                 // projectId -> clips
   settings: AppSettings | null;
+  selectedClipId: string | null;
+  setSelectedClipId: (id: string | null) => void;
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
   loadProjects: () => Promise<void>;
@@ -126,6 +128,8 @@ export const useAppStore = create<AppState>((set, get) => {
     analysisError: {},
     clips: {},
     settings: null,
+    selectedClipId: null,
+    setSelectedClipId: (id) => set({ selectedClipId: id }),
 
     setProjects: (projects) => set({ projects }),
 

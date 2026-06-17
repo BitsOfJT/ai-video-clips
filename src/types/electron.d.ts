@@ -86,6 +86,7 @@ export interface Clip {
   emotional_arc: number | null;
   platform_fit: number | null;
   reasoning: string | null;
+  thumbnail_path: string | null;
   created_at: string;
 }
 
@@ -143,7 +144,8 @@ export type ElectronChannel =
   | "analysis:complete"
   | "analysis:error"
   | "settings:get"
-  | "settings:set";
+  | "settings:set"
+  | "clip:getThumbnail";
 
 export interface ElectronAPI {
   invoke: <T>(channel: ElectronChannel, ...args: unknown[]) => Promise<T>;
