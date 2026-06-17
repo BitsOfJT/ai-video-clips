@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { X, Play, Pause } from "lucide-react";
+import { X, Play, Pause, Edit, Download } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
 import { cn } from "@/renderer/lib/utils";
 import { computeCompositeScore } from "@/renderer/lib/scoring";
+import { useAppStore } from "@/renderer/store/useAppStore";
 import type { Clip, Project } from "@/types/electron";
 
 interface PreviewPlayerProps {
   clip: Clip;
   project: Project;
   onClose: () => void;
+  onEdit: () => void;
 }
 
 function scoreColor(score: number): string {
@@ -31,16 +33,31 @@ const CRITERIA: Array<{ key: keyof Clip; label: string }> = [
   { key: "platform_fit", label: "Platform" },
 ];
 
-export default function PreviewPlayer({ clip, project, onClose }: PreviewPlayerProps) {
+export default function PreviewPlayer({ clip, project, onClose, onEdit }: PreviewPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const startExport = useAppStore((state) => state.startExport);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState((clip.start_ms ?? 0) / 1000);
-  const [barWidthPct, setBarWidthPct] = useState(0);
+  
+  // Track loaded video resolution for exact crop mapping
+  const [videoWidth, setVideoWidth] = useState(project.width ?? 0);
+  const [videoHeight, setVideoHeight] = useState(project.height ?? 0);
 
   const startSec = (clip.start_ms ?? 0) / 1000;
   const endSec = (clip.end_ms ?? 0) / 1000;
   const durationSec = Math.max(0, endSec - startSec);
   const score = computeCompositeScore(clip);
+
+  // Calculate crop geometry
+  const cropW = videoHeight > 0 ? Math.round(videoHeight * (9 / 16)) : 0;
+  const activeCropX = clip.crop_x === undefined || clip.crop_x === null || clip.crop_x === -1
+    ? Math.max(0, Math.round((videoWidth - cropW) / 2))
+    : clip.crop_x;
+
+  const leftOverlayPct = videoWidth > 0 ? (activeCropX / videoWidth) * 100 : 0;
+  const cropWidthPct = videoWidth > 0 ? (cropW / videoWidth) * 100 : 0;
+  const rightOverlayPct = 100 - (leftOverlayPct + cropWidthPct);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -55,9 +72,8 @@ export default function PreviewPlayer({ clip, project, onClose }: PreviewPlayerP
     if (!v) return;
     v.currentTime = startSec;
     if (v.videoWidth > 0) {
-      const naturalBarPct =
-        ((v.videoWidth - v.videoHeight * (9 / 16)) / 2 / v.videoWidth) * 100;
-      setBarWidthPct(Math.max(0, naturalBarPct));
+      setVideoWidth(v.videoWidth);
+      setVideoHeight(v.videoHeight);
     }
   }
 
@@ -103,31 +119,31 @@ export default function PreviewPlayer({ clip, project, onClose }: PreviewPlayerP
       </div>
 
       <div className="shrink-0 bg-black">
-        <div className="relative">
+        <div className="relative overflow-hidden aspect-video">
           <video
             ref={videoRef}
             src={`app-video://${project.video_path}`}
-            className="w-full"
+            className="w-full h-full object-contain"
             onLoadedMetadata={handleLoadedMetadata}
             onTimeUpdate={handleTimeUpdate}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
           />
-          {barWidthPct > 0 && (
+          {videoWidth > 0 && cropW < videoWidth && (
             <>
               <div
-                className="pointer-events-none absolute inset-y-0 left-0 bg-black/50"
-                style={{ width: `${barWidthPct}%` }}
+                className="pointer-events-none absolute inset-y-0 left-0 bg-black/60 border-r border-dashed border-white/20"
+                style={{ width: `${leftOverlayPct}%` }}
               />
               <div
-                className="pointer-events-none absolute inset-y-0 right-0 bg-black/50"
-                style={{ width: `${barWidthPct}%` }}
+                className="pointer-events-none absolute inset-y-0 right-0 bg-black/60 border-l border-dashed border-white/20"
+                style={{ width: `${rightOverlayPct}%` }}
               />
             </>
           )}
         </div>
 
-        <div className="flex items-center gap-3 px-3 py-2">
+        <div className="flex items-center gap-3 px-3 py-2 border-b border-border">
           <button
             onClick={togglePlayPause}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
@@ -192,6 +208,24 @@ export default function PreviewPlayer({ clip, project, onClose }: PreviewPlayerP
             </div>
           )}
         </div>
+      </div>
+
+      {/* Action Buttons Panel */}
+      <div className="shrink-0 border-t border-border p-4 bg-muted/40 space-y-2">
+        <Button onClick={onEdit} variant="outline" className="w-full flex items-center justify-center gap-1.5">
+          <Edit className="h-4 w-4" />
+          Edit Clip
+        </Button>
+        <Button
+          onClick={() => {
+            void startExport(clip.id);
+            onClose();
+          }}
+          className="w-full flex items-center justify-center gap-1.5"
+        >
+          <Download className="h-4 w-4" />
+          Export vertical video
+        </Button>
       </div>
     </div>
   );

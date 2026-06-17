@@ -6,6 +6,8 @@ import CreativeBriefInput from "@/renderer/components/CreativeBriefInput";
 import VideoTypeSelector from "@/renderer/components/VideoTypeSelector";
 import ClipGrid from "@/renderer/components/ClipGrid";
 import PreviewPlayer from "@/renderer/components/PreviewPlayer";
+import EditorPanel from "@/renderer/components/EditorPanel";
+import ExportQueue from "@/renderer/components/ExportQueue";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { AnalysisStatus, VideoType } from "@/types/electron";
 
@@ -42,6 +44,14 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
 
   const [brief, setBrief] = useState(project?.creative_brief ?? "");
   const [videoType, setVideoType] = useState<VideoType>(project?.video_type ?? "podcast");
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Reset editing mode when the selected clip changes or is closed
+  useEffect(() => {
+    if (!selectedClipId) {
+      setIsEditing(false);
+    }
+  }, [selectedClipId]);
 
   // Load persisted clips and current settings when the project changes.
   useEffect(() => {
@@ -112,14 +122,25 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
 
         <ClipGrid clips={clips} />
 
+        <ExportQueue />
+
         {selectedClipId && project && (() => {
           const selectedClip = clips.find((c) => c.id === selectedClipId);
           return selectedClip ? (
-            <PreviewPlayer
-              clip={selectedClip}
-              project={project}
-              onClose={() => setSelectedClipId(null)}
-            />
+            isEditing ? (
+              <EditorPanel
+                clip={selectedClip}
+                project={project}
+                onClose={() => setIsEditing(false)}
+              />
+            ) : (
+              <PreviewPlayer
+                clip={selectedClip}
+                project={project}
+                onClose={() => setSelectedClipId(null)}
+                onEdit={() => setIsEditing(true)}
+              />
+            )
           ) : null;
         })()}
       </CardContent>

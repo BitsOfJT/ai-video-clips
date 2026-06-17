@@ -19,6 +19,13 @@ export const IPC_CHANNELS = {
   SETTINGS_GET: "settings:get",
   SETTINGS_SET: "settings:set",
   CLIP_GET_THUMBNAIL: "clip:getThumbnail",
+  CLIP_UPDATE: "clip:update",
+  EXPORT_START: "export:start",
+  EXPORT_CANCEL: "export:cancel",
+  EXPORT_PROGRESS: "export:progress",
+  EXPORT_COMPLETE: "export:complete",
+  EXPORT_ERROR: "export:error",
+  SHELL_SHOW_ITEM: "shell:showItem",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
@@ -31,6 +38,9 @@ export const ONE_WAY_IPC_CHANNELS = [
   IPC_CHANNELS.ANALYSIS_PROGRESS,
   IPC_CHANNELS.ANALYSIS_COMPLETE,
   IPC_CHANNELS.ANALYSIS_ERROR,
+  IPC_CHANNELS.EXPORT_PROGRESS,
+  IPC_CHANNELS.EXPORT_COMPLETE,
+  IPC_CHANNELS.EXPORT_ERROR,
 ] as const;
 
 // AI analysis providers. Gemini = free tier (bring-your-own API key);

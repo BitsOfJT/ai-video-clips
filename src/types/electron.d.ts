@@ -87,7 +87,26 @@ export interface Clip {
   platform_fit: number | null;
   reasoning: string | null;
   thumbnail_path: string | null;
+  crop_x: number | null;
+  crop_y: number | null;
+  crop_w: number | null;
+  crop_h: number | null;
   created_at: string;
+}
+
+export interface ExportProgressPayload {
+  clipId: string;
+  percent: number;
+}
+
+export interface ExportCompletePayload {
+  clipId: string;
+  outputPath: string;
+}
+
+export interface ExportErrorPayload {
+  clipId: string;
+  error: string;
 }
 
 export interface AppSettings {
@@ -145,7 +164,14 @@ export type ElectronChannel =
   | "analysis:error"
   | "settings:get"
   | "settings:set"
-  | "clip:getThumbnail";
+  | "clip:getThumbnail"
+  | "clip:update"
+  | "export:start"
+  | "export:cancel"
+  | "export:progress"
+  | "export:complete"
+  | "export:error"
+  | "shell:showItem";
 
 export interface ElectronAPI {
   invoke: <T>(channel: ElectronChannel, ...args: unknown[]) => Promise<T>;
@@ -156,6 +182,9 @@ export interface ElectronAPI {
   onAnalysisProgress: (callback: (payload: AnalysisProgressPayload) => void) => void;
   onAnalysisComplete: (callback: (payload: AnalysisCompletePayload) => void) => void;
   onAnalysisError: (callback: (payload: AnalysisErrorPayload) => void) => void;
+  onExportProgress: (callback: (payload: ExportProgressPayload) => void) => void;
+  onExportComplete: (callback: (payload: ExportCompletePayload) => void) => void;
+  onExportError: (callback: (payload: ExportErrorPayload) => void) => void;
   removeAllListeners: (channel: ElectronChannel) => void;
 }
 
