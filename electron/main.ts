@@ -1,11 +1,11 @@
 import { access, constants as fsConstants, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, net, dialog, shell } from "electron";
 import Database from "better-sqlite3";
 import type {
   AnalysisStatus,
@@ -15,10 +15,12 @@ import type {
   StartAnalysisInput,
   UpdateSettingsInput,
   VideoMetadata,
+  Clip,
 } from "../src/types/electron";
 import { CONTENT_SECURITY_POLICY, IPC_CHANNELS, SUPPORTED_VIDEO_EXTENSIONS, WINDOW } from "../src/constants";
 import { getSettings, getGeminiApiKey, updateSettings } from "./settings";
 import { analyzeProject, type AnalyzedClip } from "./analysis/analyzer";
+import { extractKeyframes } from "./analysis/keyframes";
 import type { AnalysisProvider } from "./analysis/providers/types";
 import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
@@ -37,6 +39,25 @@ const activeTranscriptions = new Map<string, ChildProcess>();
 // Guard against concurrent analysis runs for the same project (analysis is
 // async I/O, not a child process, so a Set of project IDs suffices).
 const activeAnalyses = new Set<string>();
+
+// Track active export child processes
+const activeExports = new Map<string, ChildProcess>();
+
+interface ExportJob {
+  clipId: string;
+  outputPath: string;
+  videoPath: string;
+  startMs: number;
+  endMs: number;
+  cropX: number;
+  cropY: number;
+  cropW: number;
+  cropH: number;
+  wordsJsonPath: string | null;
+}
+
+const exportQueue: ExportJob[] = [];
+let activeExportJob: ExportJob | null = null;
 
 // ------------------------------------------------------------------------------
 // Window Management
@@ -78,11 +99,16 @@ async function loadRenderer(): Promise<void> {
 function configureSecurityPolicy(): void {
   if (!mainWindow) return;
 
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  const csp = isDev
+    ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173 ws://localhost:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173; style-src 'self' 'unsafe-inline' http://localhost:5173; img-src 'self' data: http://localhost:5173; connect-src 'self' ws://localhost:5173 http://localhost:5173; media-src app-video:;"
+    : CONTENT_SECURITY_POLICY;
+
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        "Content-Security-Policy": [CONTENT_SECURITY_POLICY],
+        "Content-Security-Policy": [csp],
       },
     });
   });
@@ -152,6 +178,15 @@ function initDatabase(): Database.Database {
   addColumnIfMissing("clips", "platform_fit", "platform_fit REAL");
   addColumnIfMissing("clips", "reasoning", "reasoning TEXT");
 
+  // Phase 4: thumbnail cache path on clips
+  addColumnIfMissing("clips", "thumbnail_path", "thumbnail_path TEXT");
+
+  // Phase 5: crop settings
+  addColumnIfMissing("clips", "crop_x", "crop_x INTEGER DEFAULT -1");
+  addColumnIfMissing("clips", "crop_y", "crop_y INTEGER DEFAULT -1");
+  addColumnIfMissing("clips", "crop_w", "crop_w INTEGER DEFAULT -1");
+  addColumnIfMissing("clips", "crop_h", "crop_h INTEGER DEFAULT -1");
+
   return database;
 }
 
@@ -190,6 +225,19 @@ function getModelPath(): string {
     return path.join(__dirname, "../../assets/models/whisper-base");
   }
   return path.join(process.resourcesPath, "assets", "models", "whisper-base");
+}
+
+/**
+ * Returns the absolute path to the bundled editor binary.
+ * In development, uses the built binary in assets/bin/ relative to the source tree.
+ * In production, uses the binary bundled via extraResources.
+ */
+function getEditorPath(): string {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  const base = isDev
+    ? path.join(__dirname, "../../assets/bin/editor")
+    : path.join(process.resourcesPath, "assets", "bin", "editor");
+  return process.platform === "win32" ? `${base}.exe` : base;
 }
 
 // ------------------------------------------------------------------------------
@@ -314,6 +362,129 @@ function persistClips(database: Database.Database, projectId: string, clips: Ana
     }
   });
   tx(clips);
+}
+
+// ------------------------------------------------------------------------------
+// Video Editing & Exporting
+// ------------------------------------------------------------------------------
+
+async function processNextExportJob(): Promise<void> {
+  if (activeExportJob) return;
+
+  const job = exportQueue.shift();
+  if (!job) return;
+
+  activeExportJob = job;
+
+  const database = requireDatabase();
+  database.prepare("UPDATE clips SET status = 'rendering' WHERE id = ?").run(job.clipId);
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC_CHANNELS.EXPORT_PROGRESS, { clipId: job.clipId, percent: 0 });
+  }
+
+  const editorPath = getEditorPath();
+  if (!existsSync(editorPath)) {
+    activeExportJob = null;
+    if (job.wordsJsonPath) {
+      try {
+        await unlink(job.wordsJsonPath);
+      } catch {}
+    }
+    database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+    const errorMsg = `Editor binary not found at ${editorPath}. Run 'npm run build:python' first.`;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, { clipId: job.clipId, error: errorMsg });
+    }
+    void processNextExportJob();
+    return;
+  }
+
+  const args = [
+    "--video-path", job.videoPath,
+    "--output-path", job.outputPath,
+    "--start-ms", String(job.startMs),
+    "--end-ms", String(job.endMs),
+    "--crop-x", String(job.cropX),
+    "--crop-y", String(job.cropY),
+    "--crop-w", String(job.cropW),
+    "--crop-h", String(job.cropH),
+  ];
+  if (job.wordsJsonPath) {
+    args.push("--words-json", job.wordsJsonPath);
+  }
+
+  const child = spawn(editorPath, args, { detached: false });
+  activeExports.set(job.clipId, child);
+
+  let stderrBuffer = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrBuffer += chunk.toString();
+    const lines = stderrBuffer.split("\n");
+    stderrBuffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const match = line.match(/^PROGRESS:\s*(\d+)/);
+      if (match) {
+        const percent = parseInt(match[1], 10);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(IPC_CHANNELS.EXPORT_PROGRESS, { clipId: job.clipId, percent });
+        }
+      }
+    }
+  });
+
+  child.on("exit", async (code) => {
+    activeExports.delete(job.clipId);
+    activeExportJob = null;
+
+    if (job.wordsJsonPath) {
+      try {
+        await unlink(job.wordsJsonPath);
+      } catch {}
+    }
+
+    if (code !== 0) {
+      database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, {
+          clipId: job.clipId,
+          error: `Export failed with exit code ${code}`,
+        });
+      }
+    } else {
+      database.prepare("UPDATE clips SET status = 'completed' WHERE id = ?").run(job.clipId);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC_CHANNELS.EXPORT_COMPLETE, {
+          clipId: job.clipId,
+          outputPath: job.outputPath,
+        });
+      }
+    }
+
+    void processNextExportJob();
+  });
+
+  child.on("error", async (err) => {
+    activeExports.delete(job.clipId);
+    activeExportJob = null;
+
+    if (job.wordsJsonPath) {
+      try {
+        await unlink(job.wordsJsonPath);
+      } catch {}
+    }
+
+    database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, {
+        clipId: job.clipId,
+        error: err.message,
+      });
+    }
+
+    void processNextExportJob();
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -570,6 +741,199 @@ function registerIpcHandlers(): void {
       });
     });
   });
+
+  ipcMain.handle(IPC_CHANNELS.CLIP_GET_THUMBNAIL, async (_event, clipId: string): Promise<string> => {
+    const database = requireDatabase();
+
+    const clip = database
+      .prepare("SELECT start_ms, end_ms, project_id FROM clips WHERE id = ?")
+      .get(clipId) as { start_ms: number; end_ms: number; project_id: string } | undefined;
+
+    if (!clip) {
+      throw new Error("Clip not found");
+    }
+
+    const project = database
+      .prepare("SELECT video_path FROM projects WHERE id = ?")
+      .get(clip.project_id) as { video_path: string } | undefined;
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Re-validate the video path stored in the DB before passing it to FFmpeg.
+    // The DB row may be the canonical source of truth, but validateVideoPath adds
+    // defence-in-depth: absolute path check, extension whitelist, and readability
+    // confirmation. This prevents a tampered/injected DB row from reaching FFmpeg.
+    const resolvedVideoPath = await validateVideoPath(project.video_path);
+
+    const thumbnailDir = path.join(app.getPath("userData"), "thumbnails");
+    await mkdir(thumbnailDir, { recursive: true });
+
+    let frames: string[];
+    try {
+      frames = await extractKeyframes(resolvedVideoPath, clip.start_ms, clip.end_ms, 1);
+    } catch (err) {
+      // Log the real error server-side; surface only a generic message to the renderer.
+      console.error("extractKeyframes failed for clip", clipId, err);
+      throw new Error("Failed to extract thumbnail", { cause: err });
+    }
+
+    if (!frames.length) {
+      return "";
+    }
+
+    const base64 = frames[0];
+
+    // Use only the clipId (a UUID) for the filename — never any user-controlled value.
+    const thumbnailPath = path.join(thumbnailDir, `${clipId}.jpg`);
+    try {
+      await writeFile(thumbnailPath, Buffer.from(base64, "base64"));
+    } catch (err) {
+      console.error("Failed to write thumbnail to disk for clip", clipId, err);
+      // Non-fatal: the base64 payload is still returned to the renderer.
+    }
+
+    database
+      .prepare("UPDATE clips SET thumbnail_path = ? WHERE id = ?")
+      .run(thumbnailPath, clipId);
+
+    return base64;
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLIP_UPDATE, async (_event, clipId: string, updates: Partial<Clip>): Promise<void> => {
+    const database = requireDatabase();
+    const allowedKeys: string[] = [
+      "start_ms",
+      "end_ms",
+      "title",
+      "description",
+      "crop_x",
+      "crop_y",
+      "crop_w",
+      "crop_h",
+      "status",
+    ];
+    const setClauses: string[] = [];
+    const params: unknown[] = [];
+
+    for (const key of allowedKeys) {
+      const val = (updates as any)[key];
+      if (val !== undefined) {
+        setClauses.push(`${key} = ?`);
+        params.push(val);
+      }
+    }
+
+    if (setClauses.length === 0) return;
+
+    params.push(clipId);
+    database.prepare(`UPDATE clips SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXPORT_START, async (_event, clipId: string): Promise<void> => {
+    const database = requireDatabase();
+
+    const clip = database
+      .prepare("SELECT * FROM clips WHERE id = ?")
+      .get(clipId) as Clip | undefined;
+    if (!clip) throw new Error("Clip not found");
+
+    const project = database
+      .prepare("SELECT * FROM projects WHERE id = ?")
+      .get(clip.project_id) as Project | undefined;
+    if (!project) throw new Error("Project not found");
+
+    const resolvedVideoPath = await validateVideoPath(project.video_path);
+
+    if (!mainWindow) throw new Error("Main window not available");
+    const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+      title: "Export Clip",
+      defaultPath: path.join(app.getPath("downloads"), `${clip.title || "clip"}.mp4`),
+      filters: [{ name: "MP4 Video", extensions: ["mp4"] }],
+    });
+
+    if (canceled || !filePath) return;
+
+    let wordsJsonPath: string | null = null;
+    if (project.transcript_json) {
+      try {
+        const transcript = JSON.parse(project.transcript_json);
+        const words: any[] = [];
+        if (transcript.segments) {
+          for (const seg of transcript.segments) {
+            if (seg.words) {
+              for (const w of seg.words) {
+                const wStartMs = w.start * 1000;
+                const wEndMs = w.end * 1000;
+                if (wEndMs > (clip.start_ms ?? 0) && wStartMs < (clip.end_ms ?? 0)) {
+                  words.push(w);
+                }
+              }
+            }
+          }
+        }
+        if (words.length > 0) {
+          wordsJsonPath = path.join(app.getPath("userData"), `words-${clipId}.json`);
+          await writeFile(wordsJsonPath, JSON.stringify(words));
+        }
+      } catch (err) {
+        console.error("Failed to extract words for subtitles:", err);
+      }
+    }
+
+    database.prepare("UPDATE clips SET status = 'queued' WHERE id = ?").run(clipId);
+    
+    exportQueue.push({
+      clipId,
+      outputPath: filePath,
+      videoPath: resolvedVideoPath,
+      startMs: clip.start_ms ?? 0,
+      endMs: clip.end_ms ?? 0,
+      cropX: clip.crop_x ?? -1,
+      cropY: clip.crop_y ?? -1,
+      cropW: clip.crop_w ?? -1,
+      cropH: clip.crop_h ?? -1,
+      wordsJsonPath,
+    });
+
+    void processNextExportJob();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.EXPORT_CANCEL, async (_event, clipId: string): Promise<void> => {
+    const database = requireDatabase();
+
+    if (activeExportJob && activeExportJob.clipId === clipId) {
+      const child = activeExports.get(clipId);
+      if (child) {
+        child.kill();
+      }
+      return;
+    }
+
+    const idx = exportQueue.findIndex((job) => job.clipId === clipId);
+    if (idx !== -1) {
+      const job = exportQueue[idx];
+      exportQueue.splice(idx, 1);
+      
+      if (job.wordsJsonPath) {
+        try {
+          await unlink(job.wordsJsonPath);
+        } catch {}
+      }
+
+      database.prepare("UPDATE clips SET status = 'suggested' WHERE id = ?").run(clipId);
+    }
+  });
+
+  ipcMain.handle("shell:showItem", async (_event, filePath: string): Promise<void> => {
+    if (!path.isAbsolute(filePath)) {
+      throw new Error("Invalid path");
+    }
+    const resolved = path.resolve(filePath);
+    await accessPromise(resolved, fsConstants.R_OK);
+    shell.showItemInFolder(resolved);
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -577,6 +941,62 @@ function registerIpcHandlers(): void {
 // ------------------------------------------------------------------------------
 
 app.whenReady().then(() => {
+  protocol.handle("app-video", async (request) => {
+    // Strip the custom scheme prefix and decode percent-encoding.
+    // `new URL()` is used so any path traversal sequences ("../..") in the
+    // host or pathname are normalised by the URL parser before we touch them.
+    let filePath: string;
+    try {
+      const parsed = new URL(request.url);
+      // Reconstruct a plain absolute path from host + pathname.
+      // For app-video:///absolute/path the host is empty and pathname is the path.
+      // For app-video://localhost/path host is "localhost" which we discard.
+      filePath = decodeURIComponent(parsed.pathname);
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+
+    // Reject non-absolute paths and anything that still contains traversal sequences
+    // after URL normalisation (extra safety layer).
+    if (!path.isAbsolute(filePath) || filePath.includes("..")) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    // Validate extension against the same whitelist used for project imports.
+    const ext = path.extname(filePath).toLowerCase();
+    if (!SUPPORTED_VIDEO_EXTENSIONS.includes(ext)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    // Confirm the path is a readable file that actually exists in the DB as an
+    // imported project video — this is the critical gate that prevents serving
+    // arbitrary files even if the extension check passes.
+    const resolvedPath = path.resolve(filePath);
+    if (resolvedPath !== filePath) {
+      // path.resolve changed something (e.g. symlink, relative segment) — reject.
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    try {
+      await accessPromise(resolvedPath, fsConstants.R_OK);
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+
+    // Gate: the requested path must correspond to a known project in the DB.
+    // This prevents an XSS payload in the renderer from reading arbitrary
+    // video-extension files from the filesystem.
+    if (!db) {
+      return new Response("Service unavailable", { status: 503 });
+    }
+    const row = db.prepare("SELECT id FROM projects WHERE video_path = ?").get(resolvedPath);
+    if (!row) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    return net.fetch(`file://${resolvedPath}`);
+  });
+
   db = initDatabase();
   createWindow();
   registerIpcHandlers();
@@ -594,9 +1014,12 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Ensure any running transcription child processes are terminated when the app quits
+// Ensure any running child processes are terminated when the app quits
 app.on("before-quit", () => {
   for (const [, child] of activeTranscriptions) {
+    child.kill();
+  }
+  for (const [, child] of activeExports) {
     child.kill();
   }
 });

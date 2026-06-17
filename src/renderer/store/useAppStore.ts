@@ -29,6 +29,13 @@ interface AppState {
   analysisError: Record<string, string>;         // projectId -> error message
   clips: Record<string, Clip[]>;                 // projectId -> clips
   settings: AppSettings | null;
+  selectedClipId: string | null;
+  setSelectedClipId: (id: string | null) => void;
+  exportQueue: string[];
+  exportProgress: Record<string, number>;        // clipId -> percent
+  exportStatus: Record<string, "idle" | "queued" | "rendering" | "completed" | "failed">; // clipId -> status
+  exportError: Record<string, string>;           // clipId -> error message
+  exportOutputPaths: Record<string, string>;     // clipId -> output path
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
   loadProjects: () => Promise<void>;
@@ -42,6 +49,9 @@ interface AppState {
   loadClips: (projectId: string) => Promise<void>;
   loadSettings: () => Promise<void>;
   saveSettings: (input: UpdateSettingsInput) => Promise<void>;
+  updateClip: (clipId: string, updates: Partial<Clip>) => Promise<void>;
+  startExport: (clipId: string) => Promise<void>;
+  cancelExport: (clipId: string) => Promise<void>;
 }
 
 async function invokeIpc<T>(channel: ElectronChannel, ...args: unknown[]): Promise<T> {
@@ -109,6 +119,43 @@ export const useAppStore = create<AppState>((set, get) => {
         };
       });
     });
+
+    window.electronAPI.onExportProgress((payload) => {
+      set((state) => ({
+        exportProgress: { ...state.exportProgress, [payload.clipId]: payload.percent },
+        exportStatus: { ...state.exportStatus, [payload.clipId]: "rendering" },
+      }));
+    });
+
+    window.electronAPI.onExportComplete((payload) => {
+      set((state) => {
+        const nextQueue = state.exportQueue.filter((id) => id !== payload.clipId);
+        return {
+          exportQueue: nextQueue,
+          exportStatus: { ...state.exportStatus, [payload.clipId]: "completed" },
+          exportOutputPaths: { ...state.exportOutputPaths, [payload.clipId]: payload.outputPath },
+        };
+      });
+      const currentProjId = get().currentProjectId;
+      if (currentProjId) {
+        void get().loadClips(currentProjId);
+      }
+    });
+
+    window.electronAPI.onExportError((payload) => {
+      set((state) => {
+        const nextQueue = state.exportQueue.filter((id) => id !== payload.clipId);
+        return {
+          exportQueue: nextQueue,
+          exportStatus: { ...state.exportStatus, [payload.clipId]: "failed" },
+          exportError: { ...state.exportError, [payload.clipId]: payload.error },
+        };
+      });
+      const currentProjId = get().currentProjectId;
+      if (currentProjId) {
+        void get().loadClips(currentProjId);
+      }
+    });
   }
 
   return {
@@ -126,6 +173,13 @@ export const useAppStore = create<AppState>((set, get) => {
     analysisError: {},
     clips: {},
     settings: null,
+    selectedClipId: null,
+    setSelectedClipId: (id) => set({ selectedClipId: id }),
+    exportQueue: [],
+    exportProgress: {},
+    exportStatus: {},
+    exportError: {},
+    exportOutputPaths: {},
 
     setProjects: (projects) => set({ projects }),
 
@@ -258,6 +312,74 @@ export const useAppStore = create<AppState>((set, get) => {
     saveSettings: async (input: UpdateSettingsInput) => {
       const settings = await invokeIpc<AppSettings>(IPC_CHANNELS.SETTINGS_SET, input);
       set({ settings });
+    },
+
+    updateClip: async (clipId, updates) => {
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.CLIP_UPDATE, clipId, updates);
+        const currentProjId = get().currentProjectId;
+        if (currentProjId) {
+          set((state) => {
+            const projectClips = state.clips[currentProjId] || [];
+            const nextClips = projectClips.map((c) =>
+              c.id === clipId ? { ...c, ...updates } : c
+            );
+            return {
+              clips: { ...state.clips, [currentProjId]: nextClips },
+            };
+          });
+        }
+      } catch (error) {
+        console.error("Failed to update clip:", error);
+      }
+    },
+
+    startExport: async (clipId) => {
+      set((state) => {
+        if (state.exportQueue.includes(clipId)) return {};
+        return {
+          exportQueue: [...state.exportQueue, clipId],
+          exportStatus: { ...state.exportStatus, [clipId]: "queued" },
+          exportProgress: { ...state.exportProgress, [clipId]: 0 },
+          exportError: { ...state.exportError, [clipId]: "" },
+        };
+      });
+
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.EXPORT_START, clipId);
+      } catch (error) {
+        set((state) => {
+          const nextQueue = state.exportQueue.filter((id) => id !== clipId);
+          return {
+            exportQueue: nextQueue,
+            exportStatus: { ...state.exportStatus, [clipId]: "failed" },
+            exportError: {
+              ...state.exportError,
+              [clipId]: error instanceof Error ? error.message : "Export failed to start",
+            },
+          };
+        });
+      }
+    },
+
+    cancelExport: async (clipId) => {
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.EXPORT_CANCEL, clipId);
+      } catch (error) {
+        console.error("Failed to cancel export:", error);
+      } finally {
+        set((state) => {
+          const nextQueue = state.exportQueue.filter((id) => id !== clipId);
+          return {
+            exportQueue: nextQueue,
+            exportStatus: { ...state.exportStatus, [clipId]: "idle" },
+          };
+        });
+        const currentProjId = get().currentProjectId;
+        if (currentProjId) {
+          void get().loadClips(currentProjId);
+        }
+      }
     },
   };
 });

@@ -15,6 +15,9 @@ export default defineConfig({
             sourcemap: true,
             minify: false,
             outDir: 'dist-electron/main',
+            rollupOptions: {
+              external: ['better-sqlite3'],
+            },
           },
         },
       },
@@ -26,6 +29,16 @@ export default defineConfig({
             sourcemap: true,
             minify: false,
             outDir: 'dist-electron/preload',
+            lib: {
+              entry: 'electron/preload.ts',
+              formats: ['cjs'],
+              fileName: () => 'preload.js',
+            },
+            rollupOptions: {
+              output: {
+                format: 'cjs',
+              },
+            },
           },
         },
       },

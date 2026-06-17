@@ -96,5 +96,59 @@ def build_transcriber() -> None:
     print(f"Build succeeded: {executable_path}")
 
 
+def build_editor() -> None:
+    """Run PyInstaller to bundle editor.py as a standalone executable."""
+    repo_root = get_repo_root()
+    python_dir = repo_root / "python"
+    source_script = python_dir / "editor.py"
+    output_dir = repo_root / "assets" / "bin"
+
+    if not source_script.exists():
+        print(f"Source script not found: {source_script}", file=sys.stderr)
+        sys.exit(1)
+
+    # Ensure the destination directory exists; PyInstaller will place its
+    # build artifacts inside as well.
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--onefile",
+        "--noconfirm",
+        "--clean",
+        "--name", "editor",
+        "--distpath", str(output_dir),
+        "--workpath", str(output_dir / "_build_editor"),
+        "--specpath", str(output_dir / "_spec_editor"),
+        str(source_script),
+    ]
+
+    print(f"Building editor with PyInstaller for {platform.system()}...")
+    print(f"Output directory: {output_dir}")
+
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"PyInstaller build failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        # Remove PyInstaller intermediate build directories
+        for intermediate in (output_dir / "_build_editor", output_dir / "_spec_editor"):
+            if intermediate.exists():
+                shutil.rmtree(intermediate)
+
+    executable_name = "editor.exe" if platform.system() == "Windows" else "editor"
+    executable_path = output_dir / executable_name
+
+    if not executable_path.exists():
+        print(f"Expected executable not found: {executable_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Build succeeded: {executable_path}")
+
+
 if __name__ == "__main__":
     build_transcriber()
+    build_editor()

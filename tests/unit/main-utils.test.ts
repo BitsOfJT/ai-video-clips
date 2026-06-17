@@ -58,6 +58,13 @@ function getModelPath(__dirname: string, isDev: boolean): string {
   return path.join("/fake/resources", "assets", "models", "whisper-base");
 }
 
+function getEditorPath(__dirname: string, isDev: boolean): string {
+  const base = isDev
+    ? path.join(__dirname, "../../assets/bin/editor")
+    : path.join("/fake/resources", "assets", "bin", "editor");
+  return process.platform === "win32" ? `${base}.exe` : base;
+}
+
 // -----------------------------------------------------------------------------
 // Temp file helpers
 // -----------------------------------------------------------------------------
@@ -243,5 +250,31 @@ describe("getModelPath", () => {
   it("should resolve prod path using process.resourcesPath", () => {
     const result = getModelPath(fakeDir, false);
     expect(result).toBe("/fake/resources/assets/models/whisper-base");
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Tests: getEditorPath
+// -----------------------------------------------------------------------------
+
+describe("getEditorPath", () => {
+  const fakeDir = "/app/electron";
+
+  it("should resolve dev path relative to __dirname", () => {
+    const result = getEditorPath(fakeDir, true);
+    if (process.platform === "win32") {
+      expect(result).toMatch(/editor\.exe$/);
+    } else {
+      expect(result).toBe("/assets/bin/editor");
+    }
+  });
+
+  it("should resolve prod path using process.resourcesPath", () => {
+    const result = getEditorPath(fakeDir, false);
+    if (process.platform === "win32") {
+      expect(result).toMatch(/editor\.exe$/);
+    } else {
+      expect(result).toBe("/fake/resources/assets/bin/editor");
+    }
   });
 });
