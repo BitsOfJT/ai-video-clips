@@ -1,0 +1,198 @@
+import { useEffect, useRef, useState } from "react";
+import { X, Play, Pause } from "lucide-react";
+import { Button } from "@/renderer/components/ui/button";
+import { cn } from "@/renderer/lib/utils";
+import { computeCompositeScore } from "@/renderer/lib/scoring";
+import type { Clip, Project } from "@/types/electron";
+
+interface PreviewPlayerProps {
+  clip: Clip;
+  project: Project;
+  onClose: () => void;
+}
+
+function scoreColor(score: number): string {
+  if (score >= 8) return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30";
+  if (score >= 6) return "bg-amber-500/15 text-amber-400 border-amber-500/30";
+  return "bg-muted text-muted-foreground border-border";
+}
+
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+const CRITERIA: Array<{ key: keyof Clip; label: string }> = [
+  { key: "hook_strength", label: "Hook" },
+  { key: "brief_relevance", label: "Brief" },
+  { key: "self_containment", label: "Standalone" },
+  { key: "emotional_arc", label: "Emotion" },
+  { key: "platform_fit", label: "Platform" },
+];
+
+export default function PreviewPlayer({ clip, project, onClose }: PreviewPlayerProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState((clip.start_ms ?? 0) / 1000);
+  const [barWidthPct, setBarWidthPct] = useState(0);
+
+  const startSec = (clip.start_ms ?? 0) / 1000;
+  const endSec = (clip.end_ms ?? 0) / 1000;
+  const durationSec = Math.max(0, endSec - startSec);
+  const score = computeCompositeScore(clip);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  function handleLoadedMetadata() {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = startSec;
+    if (v.videoWidth > 0) {
+      const naturalBarPct =
+        ((v.videoWidth - v.videoHeight * (9 / 16)) / 2 / v.videoWidth) * 100;
+      setBarWidthPct(Math.max(0, naturalBarPct));
+    }
+  }
+
+  function handleTimeUpdate() {
+    const v = videoRef.current;
+    if (!v) return;
+    setCurrentTime(v.currentTime);
+    if (v.currentTime >= endSec) {
+      v.pause();
+      v.currentTime = startSec;
+      setIsPlaying(false);
+    }
+  }
+
+  function togglePlayPause() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.play();
+      setIsPlaying(true);
+    } else {
+      v.pause();
+      setIsPlaying(false);
+    }
+  }
+
+  const elapsed = Math.max(0, currentTime - startSec);
+
+  return (
+    <div className="fixed right-0 top-0 z-40 flex h-screen w-96 flex-col border-l border-border bg-card shadow-2xl">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="truncate text-sm font-semibold text-foreground">
+          {clip.title || "Untitled clip"}
+        </h2>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="shrink-0 bg-black">
+        <div className="relative">
+          <video
+            ref={videoRef}
+            src={`app-video://${project.video_path}`}
+            className="w-full"
+            onLoadedMetadata={handleLoadedMetadata}
+            onTimeUpdate={handleTimeUpdate}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+          />
+          {barWidthPct > 0 && (
+            <>
+              <div
+                className="pointer-events-none absolute inset-y-0 left-0 bg-black/50"
+                style={{ width: `${barWidthPct}%` }}
+              />
+              <div
+                className="pointer-events-none absolute inset-y-0 right-0 bg-black/50"
+                style={{ width: `${barWidthPct}%` }}
+              />
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 px-3 py-2">
+          <button
+            onClick={togglePlayPause}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20"
+          >
+            {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          </button>
+          <span className="font-mono text-xs tabular-nums text-white/70">
+            {formatTime(elapsed)} / {formatTime(durationSec)}
+          </span>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-4 p-4">
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                AI Score
+              </span>
+              <span
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums",
+                  scoreColor(score)
+                )}
+              >
+                {score.toFixed(1)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-5 gap-1 text-center">
+              {CRITERIA.map(({ key, label }) => {
+                const v = (clip[key] as number | null) ?? 0;
+                return (
+                  <div key={String(key)} className="rounded bg-secondary/50 px-1 py-1.5">
+                    <div className="text-xs font-semibold tabular-nums text-foreground">
+                      {v.toFixed(0)}
+                    </div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                      {label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {clip.description && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Description
+              </span>
+              <p className="text-sm text-muted-foreground">{clip.description}</p>
+            </div>
+          )}
+
+          {clip.reasoning && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Reasoning
+              </span>
+              <p className="text-sm italic text-muted-foreground">{clip.reasoning}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

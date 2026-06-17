@@ -18,6 +18,7 @@ export const IPC_CHANNELS = {
   ANALYSIS_ERROR: "analysis:error",
   SETTINGS_GET: "settings:get",
   SETTINGS_SET: "settings:set",
+  CLIP_GET_THUMBNAIL: "clip:getThumbnail",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
@@ -71,4 +72,4 @@ export const WINDOW = {
 } as const;
 
 export const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src app-video:;";

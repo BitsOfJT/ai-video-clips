@@ -1,4 +1,4 @@
-import { Clock } from "lucide-react";
+import { Clock, Film } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/renderer/components/ui/card";
 import { cn } from "@/renderer/lib/utils";
 import { formatDuration } from "@/renderer/lib/utils";
@@ -6,6 +6,10 @@ import type { Clip } from "@/types/electron";
 
 interface ClipCardProps {
   clip: Clip;
+  onSelect: () => void;
+  isSelected: boolean;
+  compositeScore: number;
+  thumbnailB64: string;
 }
 
 /** Color the score badge by tier so strong picks stand out at a glance. */
@@ -24,24 +28,39 @@ const CRITERIA: Array<{ key: keyof Clip; label: string }> = [
 ];
 
 /** A single AI-suggested clip: title, score badge, time range, description, and score breakdown. */
-export default function ClipCard({ clip }: ClipCardProps) {
-  const score = clip.ai_score ?? 0;
+export default function ClipCard({ clip, onSelect, isSelected, compositeScore, thumbnailB64 }: ClipCardProps) {
   const startSec = (clip.start_ms ?? 0) / 1000;
   const endSec = (clip.end_ms ?? 0) / 1000;
   const lengthSec = Math.max(0, endSec - startSec);
 
   return (
-    <Card className="flex flex-col">
+    <Card
+      className={cn("flex flex-col cursor-pointer", isSelected && "ring-2 ring-primary")}
+      onClick={onSelect}
+    >
+      <div className="aspect-video w-full overflow-hidden rounded-t-md bg-muted">
+        {thumbnailB64 ? (
+          <img
+            src={`data:image/jpeg;base64,${thumbnailB64}`}
+            className="w-full h-full object-cover"
+            alt=""
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <Film className="h-8 w-8 text-muted-foreground/30" />
+          </div>
+        )}
+      </div>
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="text-base leading-tight">{clip.title || "Untitled clip"}</CardTitle>
           <span
             className={cn(
               "shrink-0 rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums",
-              scoreColor(score)
+              scoreColor(compositeScore)
             )}
           >
-            {score.toFixed(1)}
+            {compositeScore.toFixed(1)}
           </span>
         </div>
         <div className="flex items-center gap-1 text-xs text-muted-foreground">

@@ -1,11 +1,11 @@
 import { access, constants as fsConstants, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, net } from "electron";
 import Database from "better-sqlite3";
 import type {
   AnalysisStatus,
@@ -19,6 +19,7 @@ import type {
 import { CONTENT_SECURITY_POLICY, IPC_CHANNELS, SUPPORTED_VIDEO_EXTENSIONS, WINDOW } from "../src/constants";
 import { getSettings, getGeminiApiKey, updateSettings } from "./settings";
 import { analyzeProject, type AnalyzedClip } from "./analysis/analyzer";
+import { extractKeyframes } from "./analysis/keyframes";
 import type { AnalysisProvider } from "./analysis/providers/types";
 import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
@@ -151,6 +152,9 @@ function initDatabase(): Database.Database {
   addColumnIfMissing("clips", "emotional_arc", "emotional_arc REAL");
   addColumnIfMissing("clips", "platform_fit", "platform_fit REAL");
   addColumnIfMissing("clips", "reasoning", "reasoning TEXT");
+
+  // Phase 4: thumbnail cache path on clips
+  addColumnIfMissing("clips", "thumbnail_path", "thumbnail_path TEXT");
 
   return database;
 }
@@ -570,6 +574,65 @@ function registerIpcHandlers(): void {
       });
     });
   });
+
+  ipcMain.handle(IPC_CHANNELS.CLIP_GET_THUMBNAIL, async (_event, clipId: string): Promise<string> => {
+    const database = requireDatabase();
+
+    const clip = database
+      .prepare("SELECT start_ms, end_ms, project_id FROM clips WHERE id = ?")
+      .get(clipId) as { start_ms: number; end_ms: number; project_id: string } | undefined;
+
+    if (!clip) {
+      throw new Error("Clip not found");
+    }
+
+    const project = database
+      .prepare("SELECT video_path FROM projects WHERE id = ?")
+      .get(clip.project_id) as { video_path: string } | undefined;
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Re-validate the video path stored in the DB before passing it to FFmpeg.
+    // The DB row may be the canonical source of truth, but validateVideoPath adds
+    // defence-in-depth: absolute path check, extension whitelist, and readability
+    // confirmation. This prevents a tampered/injected DB row from reaching FFmpeg.
+    const resolvedVideoPath = await validateVideoPath(project.video_path);
+
+    const thumbnailDir = path.join(app.getPath("userData"), "thumbnails");
+    await mkdir(thumbnailDir, { recursive: true });
+
+    let frames: string[];
+    try {
+      frames = await extractKeyframes(resolvedVideoPath, clip.start_ms, clip.end_ms, 1);
+    } catch (err) {
+      // Log the real error server-side; surface only a generic message to the renderer.
+      console.error("extractKeyframes failed for clip", clipId, err);
+      throw new Error("Failed to extract thumbnail", { cause: err });
+    }
+
+    if (!frames.length) {
+      return "";
+    }
+
+    const base64 = frames[0];
+
+    // Use only the clipId (a UUID) for the filename — never any user-controlled value.
+    const thumbnailPath = path.join(thumbnailDir, `${clipId}.jpg`);
+    try {
+      await writeFile(thumbnailPath, Buffer.from(base64, "base64"));
+    } catch (err) {
+      console.error("Failed to write thumbnail to disk for clip", clipId, err);
+      // Non-fatal: the base64 payload is still returned to the renderer.
+    }
+
+    database
+      .prepare("UPDATE clips SET thumbnail_path = ? WHERE id = ?")
+      .run(thumbnailPath, clipId);
+
+    return base64;
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -577,6 +640,62 @@ function registerIpcHandlers(): void {
 // ------------------------------------------------------------------------------
 
 app.whenReady().then(() => {
+  protocol.handle("app-video", async (request) => {
+    // Strip the custom scheme prefix and decode percent-encoding.
+    // `new URL()` is used so any path traversal sequences ("../..") in the
+    // host or pathname are normalised by the URL parser before we touch them.
+    let filePath: string;
+    try {
+      const parsed = new URL(request.url);
+      // Reconstruct a plain absolute path from host + pathname.
+      // For app-video:///absolute/path the host is empty and pathname is the path.
+      // For app-video://localhost/path host is "localhost" which we discard.
+      filePath = decodeURIComponent(parsed.pathname);
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
+
+    // Reject non-absolute paths and anything that still contains traversal sequences
+    // after URL normalisation (extra safety layer).
+    if (!path.isAbsolute(filePath) || filePath.includes("..")) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    // Validate extension against the same whitelist used for project imports.
+    const ext = path.extname(filePath).toLowerCase();
+    if (!SUPPORTED_VIDEO_EXTENSIONS.includes(ext)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    // Confirm the path is a readable file that actually exists in the DB as an
+    // imported project video — this is the critical gate that prevents serving
+    // arbitrary files even if the extension check passes.
+    const resolvedPath = path.resolve(filePath);
+    if (resolvedPath !== filePath) {
+      // path.resolve changed something (e.g. symlink, relative segment) — reject.
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    try {
+      await accessPromise(resolvedPath, fsConstants.R_OK);
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+
+    // Gate: the requested path must correspond to a known project in the DB.
+    // This prevents an XSS payload in the renderer from reading arbitrary
+    // video-extension files from the filesystem.
+    if (!db) {
+      return new Response("Service unavailable", { status: 503 });
+    }
+    const row = db.prepare("SELECT id FROM projects WHERE video_path = ?").get(resolvedPath);
+    if (!row) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    return net.fetch(`file://${resolvedPath}`);
+  });
+
   db = initDatabase();
   createWindow();
   registerIpcHandlers();

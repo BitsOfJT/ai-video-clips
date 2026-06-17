@@ -135,6 +135,8 @@ Each clip receives a final score combining:
 
 Clips are sorted by final score and presented in a "Top Picks" grid.
 
+> **v1 status (Phase 4):** Audio energy, visual dynamism, and speech density require Python/OpenCV analysis that isn't built yet. The shipped v1 ranker (`src/renderer/lib/scoring.ts`) redistributes their combined 50% across the AI-derived signals — **40% `ai_score` · 30% `brief_relevance` · 10% `hook_strength` · 10% `emotional_arc` · 10% `platform_fit`** — computed at display time from DB signals. The table above remains the target once those signals are available.
+
 ### 6. Clip Preview & Selection
 - **Grid View**: Thumbnails + AI-generated title/description + virality score badge.
 - **Preview Player**: Click to play the full segment with simulated 9:16 crop overlay.
@@ -185,13 +187,14 @@ Clips are sorted by final score and presented in a "Top Picks" grid.
 - [x] Display AI-generated clip suggestions in `ClipGrid`.
 - [x] Minimal Settings panel (provider + encrypted API key) pulled forward from Phase 6.
 
-### Phase 4: Ranking & Preview
-- [ ] Implement `ranker.py` (composite scoring algorithm).
-- [ ] Calculate audio energy and visual dynamism for each chunk.
-- [ ] Sort clips by final score and render in grid. *(AI-score sorting + grid rendering already done in Phase 3; composite scoring still pending.)*
-- [ ] Generate clip thumbnails using FFmpeg frame extraction. *(Keyframe extraction exists in `electron/analysis/keyframes.ts` for the vision pass; preview thumbnails still pending.)*
-- [x] Build `ClipCard` with AI title, description, and score badge (with per-criterion breakdown).
-- [ ] Build `PreviewPlayer` with 9:16 crop simulation overlay.
+### Phase 4: Ranking & Preview ✅ COMPLETE
+- [x] Composite scoring — implemented as a **renderer utility** (`src/renderer/lib/scoring.ts`), not `ranker.py`. Computed at display time from signals already in the DB, so no new column goes stale when weights change. v1 weights: 40% `ai_score` · 30% `brief_relevance` · 10% `hook_strength` · 10% `emotional_arc` · 10% `platform_fit`.
+- [ ] Calculate audio energy and visual dynamism for each chunk. *(Deferred — requires Python/OpenCV audio + frame-differencing analysis. Their planned share is redistributed across the AI/brief signals in v1; revisit in a later phase.)*
+- [x] Sort clips by composite score and render in grid (`sortByComposite` in `ClipGrid`).
+- [x] Generate clip thumbnails via FFmpeg frame extraction — `clip:getThumbnail` IPC handler reuses `extractKeyframes` from `electron/analysis/keyframes.ts`, writes JPEG bytes to `userData/thumbnails/<clipId>.jpg`, returns base64. Hardened with video-path re-validation and UUID-based filenames.
+- [x] Build `ClipCard` with AI title, description, score badge (per-criterion breakdown), thumbnail, and selection ring.
+- [x] Build `PreviewPlayer` with 9:16 crop simulation overlay, loop-within-clip playback, Escape-to-close, and score + reasoning display. Backed by a hardened `app-video://` custom protocol (CSP `media-src app-video:`).
+- [x] Clip selection state in the Zustand store (`selectedClipId`); `AnalysisControls` mounts `PreviewPlayer` when a clip is selected.
 
 ### Phase 5: Auto-Edit & Export
 - [ ] Package `editor.py` as executable.
@@ -303,12 +306,13 @@ Similar structure adapted for text-based vision models. The prompt includes a de
 
 ## Next Steps
 
-1. ✅ Finalize this plan (done!).
-2. 🔄 Set up the Electron + Vite + React scaffold.
-3. 🔄 Bundle FFmpeg for macOS and Windows.
-4. 🔄 Package faster-whisper transcriber.
-5. 🔄 Build the Creative Brief and Video Type selection UI.
-6. 🔄 Implement the Gemini/Ollama analysis pipeline.
+1. ✅ Finalize this plan.
+2. ✅ Set up the Electron + Vite + React scaffold (Phase 1).
+3. ✅ Package faster-whisper transcriber + transcription pipeline (Phase 2).
+4. ✅ Build the Creative Brief, Video Type selector, and Gemini/Ollama analysis pipeline (Phase 3).
+5. ✅ Implement ranking, thumbnails, and the clip preview player (Phase 4).
+6. 🔄 Auto-edit & export — trim, 9:16 crop, karaoke captions, FFmpeg render queue (Phase 5).
+7. 🔄 Bundle FFmpeg for macOS & Windows + settings/error handling + `.dmg`/`.exe` packaging (Phase 6).
 
 ---
 
