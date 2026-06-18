@@ -16,6 +16,7 @@ const KEYS = {
   ollamaBaseUrl: "ollama_base_url",
   ollamaTextModel: "ollama_text_model",
   ollamaVisionModel: "ollama_vision_model",
+  ffmpegPath: "ffmpeg_path",
 } as const;
 
 const ENC_PREFIX = "enc:";
@@ -74,6 +75,7 @@ export function getSettings(db: Database.Database): AppSettings {
     ollamaBaseUrl: readRaw(db, KEYS.ollamaBaseUrl) ?? OLLAMA_DEFAULTS.baseUrl,
     ollamaTextModel: readRaw(db, KEYS.ollamaTextModel) ?? OLLAMA_DEFAULTS.textModel,
     ollamaVisionModel: readRaw(db, KEYS.ollamaVisionModel) ?? OLLAMA_DEFAULTS.visionModel,
+    ffmpegPath: readRaw(db, KEYS.ffmpegPath) ?? "",
   };
 }
 
@@ -98,6 +100,9 @@ export function updateSettings(db: Database.Database, input: UpdateSettingsInput
   }
   if (input.ollamaVisionModel !== undefined) {
     writeRaw(db, KEYS.ollamaVisionModel, input.ollamaVisionModel.trim() || OLLAMA_DEFAULTS.visionModel);
+  }
+  if (input.ffmpegPath !== undefined) {
+    writeRaw(db, KEYS.ffmpegPath, input.ffmpegPath.trim());
   }
   return getSettings(db);
 }

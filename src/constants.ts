@@ -26,6 +26,9 @@ export const IPC_CHANNELS = {
   EXPORT_COMPLETE: "export:complete",
   EXPORT_ERROR: "export:error",
   SHELL_SHOW_ITEM: "shell:showItem",
+  FFMPEG_VALIDATE: "ffmpeg:validate",
+  DIALOG_OPEN_FILE: "dialog:openFile",
+  OLLAMA_LIST_MODELS: "ollama:listModels",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];

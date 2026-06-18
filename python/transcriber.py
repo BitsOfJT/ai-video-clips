@@ -14,6 +14,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         "--extract-audio",
         action="store_true",
         help="Extract audio from the video before transcribing.",
+    )
+    parser.add_argument(
+        "--ffmpeg-path",
+        default="ffmpeg",
+        help="Absolute path to the FFmpeg binary (used for audio extraction).",
     )
     return parser.parse_args()
 
@@ -140,6 +148,10 @@ def get_video_duration(video_path: str) -> float:
     Returns:
         Duration in seconds, or 0.0 if it cannot be determined.
     """
+    if not shutil.which("ffprobe"):
+        print("Warning: ffprobe not found in system PATH.", file=sys.stderr, flush=True)
+        return 0.0
+
     try:
         result = subprocess.run(
             [
@@ -169,9 +181,18 @@ def main() -> None:
     model_dir = args.model_dir
     output_json = args.output_json
 
+    if not os.path.exists(video_path):
+        print(f"Error: Input file not found: {video_path}", file=sys.stderr, flush=True)
+        sys.exit(1)
+
     # Optionally extract a clean WAV before transcription.
     if args.extract_audio:
-        audio_path = extract_audio(video_path)
+        try:
+            print(f"Extracting audio from {video_path}...", file=sys.stderr, flush=True)
+            audio_path = extract_audio(video_path, ffmpeg_path=args.ffmpeg_path)
+        except Exception as exc:
+            print(f"Error extracting audio: {exc}", file=sys.stderr, flush=True)
+            sys.exit(1)
     else:
         audio_path = video_path
 
@@ -191,6 +212,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     try:
         main()
     except Exception as exc:  # noqa: BLE001

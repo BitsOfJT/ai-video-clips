@@ -2,6 +2,7 @@ import { Play, CheckCircle2, AlertCircle, Loader2, FolderOpen, Trash2, X } from 
 import { Button } from "@/renderer/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/renderer/components/ui/card";
 import { useAppStore } from "@/renderer/store/useAppStore";
+import { IPC_CHANNELS } from "@/constants";
 
 export default function ExportQueue() {
   const currentProjectId = useAppStore((state) => state.currentProjectId);
@@ -21,7 +22,7 @@ export default function ExportQueue() {
   // Helper to open file in system folder
   const handleOpenFolder = async (filePath: string) => {
     try {
-      await window.electronAPI.invoke("shell:showItem", filePath);
+      await window.electronAPI.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM, filePath);
     } catch (err) {
       console.error("Failed to open file in folder:", err);
     }

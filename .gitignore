@@ -14,5 +14,8 @@ assets/models/*
 assets/bin/*
 !assets/bin/.gitkeep
 venv/
+.venv-pyinstaller/
 __pycache__/
 *.pyc
+scripts/test_input.mp4
+scripts/test_input_audio.wav

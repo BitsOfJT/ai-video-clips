@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -73,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         "--words-json",
         default="",
         help="Path to a JSON file containing the words to burn in as subtitles.",
+    )
+    parser.add_argument(
+        "--ffmpeg-path",
+        default="ffmpeg",
+        help="Absolute path to the FFmpeg binary.",
     )
     return parser.parse_args()
 
@@ -208,16 +214,27 @@ def generate_ass_subtitles(
         handle.write("\n".join(ass_lines) + "\n")
 
 
-def get_video_resolution(video_path: str) -> tuple[int, int]:
+def get_video_resolution(video_path: str, ffmpeg_path: str = "ffmpeg") -> tuple[int, int]:
     """Retrieve video width and height using ffprobe.
 
     Returns:
         A tuple of (width, height), defaulting to (1920, 1080) if probing fails.
     """
+    import os
+    ffprobe_cmd = "ffprobe"
+    if ffmpeg_path != "ffmpeg":
+        ffprobe_cmd = os.path.join(os.path.dirname(ffmpeg_path), "ffprobe")
+        if os.name == "nt" and not ffprobe_cmd.lower().endswith(".exe"):
+            ffprobe_cmd += ".exe"
+
+    if not shutil.which(ffprobe_cmd):
+        print(f"Warning: ffprobe not found at {ffprobe_cmd}", file=sys.stderr, flush=True)
+        return 1920, 1080
+
     try:
         result = subprocess.run(
             [
-                "ffprobe",
+                ffprobe_cmd,
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-show_entries", "stream=width,height",
@@ -237,14 +254,22 @@ def get_video_resolution(video_path: str) -> tuple[int, int]:
 
 
 def escape_subtitle_path(path_str: str) -> str:
-    """Escape backslashes and colons in a path for the FFmpeg subtitles filter."""
-    # Convert windows path backslashes to forward slashes
+    """Escape a path for the FFmpeg subtitles filter.
+
+    FFmpeg subtitles filter syntax accepts either:
+        subtitles=/path/to/file.ass
+    or, for paths containing special characters:
+        subtitles='filename=/path/to/file.ass'
+
+    We always use the quoted filename= form so spaces, commas, and colons are
+    handled safely across platforms. Single quotes inside the path are doubled
+    ('') to escape them within the FFmpeg quoted string.
+    """
+    # Normalize Windows backslashes to forward slashes.
     p = path_str.replace("\\", "/")
-    # Escape colons (e.g. C:/path -> C\\:/path)
-    p = p.replace(":", "\\:")
-    # Escape single quotes
-    p = p.replace("'", "'\\\\''")
-    return p
+    # Escape single quotes by doubling them (FFmpeg quoted-string rule).
+    p = p.replace("'", "''")
+    return f"filename='{p}'"
 
 
 def main() -> None:
@@ -256,6 +281,14 @@ def main() -> None:
     start_ms = args.start_ms
     end_ms = args.end_ms
     
+    if not os.path.exists(video_path):
+        print(f"Error: Input video not found: {video_path}", file=sys.stderr, flush=True)
+        sys.exit(1)
+        
+    if not shutil.which(args.ffmpeg_path):
+        print(f"Error: FFmpeg binary not found at: {args.ffmpeg_path}", file=sys.stderr, flush=True)
+        sys.exit(1)
+    
     # Target clip duration in seconds
     duration_sec = (end_ms - start_ms) / 1000.0
     if duration_sec <= 0:
@@ -263,7 +296,7 @@ def main() -> None:
         sys.exit(1)
 
     # 1. Resolve crop parameters
-    video_w, video_h = get_video_resolution(video_path)
+    video_w, video_h = get_video_resolution(video_path, args.ffmpeg_path)
     
     crop_w = args.crop_w
     crop_h = args.crop_h
@@ -340,7 +373,7 @@ def main() -> None:
     # Use fast seeking (-ss before -i)
     start_sec = start_ms / 1000.0
     command = [
-        "ffmpeg",
+        args.ffmpeg_path,
         "-y",
         "-ss", f"{start_sec:.3f}",
         "-t", f"{duration_sec:.3f}",

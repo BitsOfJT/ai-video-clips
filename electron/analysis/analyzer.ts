@@ -24,6 +24,8 @@ export interface AnalyzeOptions {
   videoType: VideoType;
   shortlistSize?: number;
   framesPerClip?: number;
+  /** Path to the FFmpeg binary; defaults to on-PATH `ffmpeg`. */
+  ffmpegPath?: string;
   /** Reports coarse progress so the renderer can show a live bar. */
   onProgress?: (stage: AnalysisStatus, percent: number) => void;
 }
@@ -59,6 +61,7 @@ export async function analyzeProject(opts: AnalyzeOptions): Promise<AnalyzedClip
     videoType,
     shortlistSize = VISION_SHORTLIST_SIZE,
     framesPerClip = 3,
+    ffmpegPath = "ffmpeg",
     onProgress,
   } = opts;
 
@@ -89,7 +92,7 @@ export async function analyzeProject(opts: AnalyzeOptions): Promise<AnalyzedClip
     const visionInputs: VisionChunkInput[] = [];
     for (let i = 0; i < shortlist.length; i++) {
       const chunk = shortlist[i];
-      const keyframes = await extractKeyframes(videoPath, chunk.startMs, chunk.endMs, framesPerClip);
+      const keyframes = await extractKeyframes(videoPath, chunk.startMs, chunk.endMs, framesPerClip, 512, ffmpegPath);
       visionInputs.push({ ...toChunkInput(chunk), keyframes });
       onProgress?.("refining", 55 + Math.round(((i + 1) / shortlist.length) * 30));
     }

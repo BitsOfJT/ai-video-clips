@@ -12,11 +12,15 @@ stable, predictable path.
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
 
-from faster_whisper import download_model
+# Runtime files required by faster_whisper.WhisperModel for the base model.
+# Keep these as a module-level constant so the idempotency check is self-contained
+# and does not need to import faster_whisper.
+REQUIRED_MODEL_FILES = ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt")
 
 
 def get_repo_root() -> Path:
@@ -25,14 +29,48 @@ def get_repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def _model_files_look_valid(model_dir: Path) -> bool:
+    """Check whether the required runtime model files exist and look valid.
+
+    Validation is intentionally lightweight: missing files or a malformed
+    config.json are treated as invalid so the download will run again.
+    """
+    for filename in REQUIRED_MODEL_FILES:
+        file_path = model_dir / filename
+        if not file_path.is_file() or file_path.stat().st_size == 0:
+            return False
+
+    # Confirm config.json is at least parseable JSON (the simplest integrity
+    # check that does not require faster_whisper).
+    config_path = model_dir / "config.json"
+    try:
+        with config_path.open("r", encoding="utf-8") as config_file:
+            json.load(config_file)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    return True
+
+
 def download_base_model() -> None:
-    """Download faster-whisper-base and report the number of files saved."""
+    """Download faster-whisper-base if needed and report status."""
     repo_root = get_repo_root()
     download_root = repo_root / "assets" / "models" / "whisper-base"
 
-    # Ensure the destination directory exists before asking faster-whisper to
-    # write into it.
+    # Ensure the destination directory exists before checking contents or
+    # asking faster-whisper to write into it.
     download_root.mkdir(parents=True, exist_ok=True)
+
+    if _model_files_look_valid(download_root):
+        print(
+            f"Model files already present at {download_root}; skipping download."
+        )
+        return
+
+    # Import only when a download is actually needed. This keeps the script usable
+    # during packaging (where faster_whisper may not be installed) as long as the
+    # bundled model files are already present.
+    from faster_whisper import download_model
 
     # Use faster_whisper's helper to download the model files directly into a
     # flat directory layout (model.bin, config.json, tokenizer.json, etc.).

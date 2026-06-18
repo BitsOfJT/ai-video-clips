@@ -24,10 +24,32 @@ import { extractKeyframes } from "./analysis/keyframes";
 import type { AnalysisProvider } from "./analysis/providers/types";
 import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
+import { logger, initLogger, friendlyExitMessage } from "./logger";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const execFileAsync = promisify(execFile);
+
+// Helper to resolve FFmpeg path
+function getFfmpegPath(db: Database.Database): string {
+  const settings = getSettings(db);
+  if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
+    return settings.ffmpegPath;
+  }
+  return "ffmpeg"; // Fall back to system PATH
+}
+
+function getFfprobePath(db: Database.Database): string {
+  const ffmpegPath = getFfmpegPath(db);
+  if (ffmpegPath !== "ffmpeg") {
+    // Attempt to resolve ffprobe relative to ffmpeg path
+    const dir = path.dirname(ffmpegPath);
+    const ext = process.platform === "win32" ? ".exe" : "";
+    const probePath = path.join(dir, `ffprobe${ext}`);
+    if (existsSync(probePath)) return probePath;
+  }
+  return "ffprobe";
+}
 
 let mainWindow: BrowserWindow | null = null;
 let db: Database.Database | null = null;
@@ -245,15 +267,31 @@ function getEditorPath(): string {
 // ------------------------------------------------------------------------------
 
 async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
-  const { stdout } = await execFileAsync("ffprobe", [
-    "-v",
-    "quiet",
-    "-print_format",
-    "json",
-    "-show_format",
-    "-show_streams",
-    videoPath,
-  ]);
+  const database = requireDatabase();
+  const ffprobePath = getFfprobePath(database);
+  
+  logger.subprocess("ffprobe", ffprobePath, ["-show_format", "-show_streams", videoPath]);
+  
+  let stdout: string;
+  try {
+    const result = await execFileAsync(ffprobePath, [
+      "-v",
+      "quiet",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      videoPath,
+    ]);
+    stdout = result.stdout;
+  } catch (err) {
+    const execErr = err as { message?: string; code?: string | number | null };
+    logger.error("ffprobe", `Failed to probe video: ${execErr.message ?? "unknown error"}`);
+    const exitCode = typeof execErr.code === "number" ? execErr.code : 1;
+    throw new Error(friendlyExitMessage("ffprobe", exitCode), {
+      cause: err,
+    });
+  }
 
   const probe = JSON.parse(stdout) as {
     streams?: Array<{
@@ -389,7 +427,9 @@ async function processNextExportJob(): Promise<void> {
     if (job.wordsJsonPath) {
       try {
         await unlink(job.wordsJsonPath);
-      } catch {}
+      } catch {
+        // Best-effort cleanup of temporary word JSON; ignore failures.
+      }
     }
     database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
     const errorMsg = `Editor binary not found at ${editorPath}. Run 'npm run build:python' first.`;
@@ -414,12 +454,26 @@ async function processNextExportJob(): Promise<void> {
     args.push("--words-json", job.wordsJsonPath);
   }
 
+  // Pass custom FFmpeg path to editor binary if set
+  const ffmpegPath = getFfmpegPath(database);
+  if (ffmpegPath !== "ffmpeg") {
+    args.push("--ffmpeg-path", ffmpegPath);
+  }
+
+  logger.subprocess("editor", editorPath, args);
   const child = spawn(editorPath, args, { detached: false });
   activeExports.set(job.clipId, child);
 
   let stderrBuffer = "";
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderrBuffer += chunk.toString();
+    const text = chunk.toString();
+    stderrBuffer += text;
+    // Log non-progress lines to our logger
+    text.split("\n").forEach(line => {
+      if (line.trim() && !line.startsWith("PROGRESS:")) {
+        logger.subprocessStderr("editor", line);
+      }
+    });
     const lines = stderrBuffer.split("\n");
     stderrBuffer = lines.pop() || "";
 
@@ -434,22 +488,26 @@ async function processNextExportJob(): Promise<void> {
     }
   });
 
-  child.on("exit", async (code) => {
+  child.on("exit", async (code, signal) => {
+    logger.subprocessExit("editor", code, signal);
     activeExports.delete(job.clipId);
     activeExportJob = null;
 
     if (job.wordsJsonPath) {
       try {
         await unlink(job.wordsJsonPath);
-      } catch {}
+      } catch {
+        // Best-effort cleanup of temporary word JSON; ignore failures.
+      }
     }
 
     if (code !== 0) {
       database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
       if (mainWindow && !mainWindow.isDestroyed()) {
+        const errorMsg = friendlyExitMessage("editor", code);
         mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, {
           clipId: job.clipId,
-          error: `Export failed with exit code ${code}`,
+          error: errorMsg,
         });
       }
     } else {
@@ -472,7 +530,9 @@ async function processNextExportJob(): Promise<void> {
     if (job.wordsJsonPath) {
       try {
         await unlink(job.wordsJsonPath);
-      } catch {}
+      } catch {
+        // Best-effort cleanup of temporary word JSON; ignore failures.
+      }
     }
 
     database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
@@ -608,6 +668,7 @@ function registerIpcHandlers(): void {
         videoPath: resolvedVideoPath,
         creativeBrief,
         videoType,
+        ffmpegPath: getFfmpegPath(database),
         onProgress: sendProgress,
       });
 
@@ -666,14 +727,28 @@ function registerIpcHandlers(): void {
     if (extractAudio) {
       args.push("--extract-audio");
     }
+    
+    // Pass custom FFmpeg path to transcriber binary if set (used for audio extraction)
+    const ffmpegPath = getFfmpegPath(database);
+    if (ffmpegPath !== "ffmpeg") {
+      args.push("--ffmpeg-path", ffmpegPath);
+    }
 
+    logger.subprocess("transcriber", transcriberPath, args);
     const child = spawn(transcriberPath, args, { detached: false });
     activeTranscriptions.set(projectId, child);
 
     // Parse stderr for PROGRESS: XX lines and forward them to the renderer
     let stderrBuffer = "";
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderrBuffer += chunk.toString();
+      const text = chunk.toString();
+      stderrBuffer += text;
+      // Log non-progress lines to our logger
+      text.split("\n").forEach(line => {
+        if (line.trim() && !line.startsWith("PROGRESS:")) {
+          logger.subprocessStderr("transcriber", line);
+        }
+      });
       const lines = stderrBuffer.split("\n");
       stderrBuffer = lines.pop() || "";
 
@@ -689,12 +764,13 @@ function registerIpcHandlers(): void {
     });
 
     return new Promise<void>((resolve, reject) => {
-      child.on("exit", async (code) => {
+      child.on("exit", async (code, signal) => {
+        logger.subprocessExit("transcriber", code, signal);
         activeTranscriptions.delete(projectId);
 
         if (code !== 0) {
           database.prepare("UPDATE projects SET transcript_status = 'failed' WHERE id = ?").run(projectId);
-          const exitMessage = `Transcription exited with code ${code ?? "unknown"}`;
+          const exitMessage = friendlyExitMessage("transcriber", code);
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send(IPC_CHANNELS.TRANSCRIPTION_ERROR, {
               projectId,
@@ -772,7 +848,7 @@ function registerIpcHandlers(): void {
 
     let frames: string[];
     try {
-      frames = await extractKeyframes(resolvedVideoPath, clip.start_ms, clip.end_ms, 1);
+      frames = await extractKeyframes(resolvedVideoPath, clip.start_ms, clip.end_ms, 1, 512, getFfmpegPath(database));
     } catch (err) {
       // Log the real error server-side; surface only a generic message to the renderer.
       console.error("extractKeyframes failed for clip", clipId, err);
@@ -818,7 +894,7 @@ function registerIpcHandlers(): void {
     const params: unknown[] = [];
 
     for (const key of allowedKeys) {
-      const val = (updates as any)[key];
+      const val = (updates as Record<string, unknown>)[key];
       if (val !== undefined) {
         setClauses.push(`${key} = ?`);
         params.push(val);
@@ -859,13 +935,13 @@ function registerIpcHandlers(): void {
     if (project.transcript_json) {
       try {
         const transcript = JSON.parse(project.transcript_json);
-        const words: any[] = [];
+        const words: Array<Record<string, unknown>> = [];
         if (transcript.segments) {
           for (const seg of transcript.segments) {
             if (seg.words) {
               for (const w of seg.words) {
-                const wStartMs = w.start * 1000;
-                const wEndMs = w.end * 1000;
+                const wStartMs = (w.start as number) * 1000;
+                const wEndMs = (w.end as number) * 1000;
                 if (wEndMs > (clip.start_ms ?? 0) && wStartMs < (clip.end_ms ?? 0)) {
                   words.push(w);
                 }
@@ -919,20 +995,115 @@ function registerIpcHandlers(): void {
       if (job.wordsJsonPath) {
         try {
           await unlink(job.wordsJsonPath);
-        } catch {}
+        } catch {
+          // Best-effort cleanup of temporary word JSON; ignore failures.
+        }
       }
 
       database.prepare("UPDATE clips SET status = 'suggested' WHERE id = ?").run(clipId);
     }
   });
 
-  ipcMain.handle("shell:showItem", async (_event, filePath: string): Promise<void> => {
+  ipcMain.handle(IPC_CHANNELS.SHELL_SHOW_ITEM, async (_event, filePath: string): Promise<void> => {
     if (!path.isAbsolute(filePath)) {
       throw new Error("Invalid path");
     }
+
     const resolved = path.resolve(filePath);
+
+    // Reject paths that still contain traversal segments after resolution.
+    if (filePath.includes("..") || resolved.includes("..")) {
+      throw new Error("Invalid path");
+    }
+
+    // Validate the file being revealed is either a known export output or a known project video.
+    // This prevents an arbitrary file from being opened via a compromised renderer.
+    const database = requireDatabase();
+    const outputRow = database
+      .prepare(
+        "SELECT output_path FROM clips WHERE status = 'completed' AND output_path IS NOT NULL AND output_path = ?"
+      )
+      .get(resolved) as { output_path: string } | undefined;
+    const videoRow = database
+      .prepare("SELECT video_path FROM projects WHERE video_path = ?")
+      .get(resolved) as { video_path: string } | undefined;
+
+    if (!outputRow && !videoRow) {
+      throw new Error("Invalid path");
+    }
+
     await accessPromise(resolved, fsConstants.R_OK);
     shell.showItemInFolder(resolved);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.DIALOG_OPEN_FILE,
+    async (_event, options: Electron.OpenDialogOptions): Promise<string | null> => {
+      if (!mainWindow) return null;
+      const result = await dialog.showOpenDialog(mainWindow, options);
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.FFMPEG_VALIDATE, async (_event, ffmpegPath: string): Promise<boolean> => {
+    try {
+      if (!ffmpegPath) return false;
+      const { stdout } = await execFileAsync(ffmpegPath, ["-version"]);
+      return stdout.includes("ffmpeg");
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.OLLAMA_LIST_MODELS, async (_event, baseUrl: string): Promise<string[]> => {
+    const trimmed = (baseUrl ?? "").trim();
+    if (!trimmed) {
+      throw new Error("Ollama URL is empty");
+    }
+
+    let normalized: string;
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new Error("Ollama URL must use http:// or https://");
+      }
+      if (parsed.pathname.includes("..") || trimmed.includes("@") || parsed.username || parsed.password) {
+        throw new Error("Invalid Ollama URL");
+      }
+      normalized = `${parsed.protocol}//${parsed.host}`;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("Ollama URL")) {
+        throw err;
+      }
+      throw new Error("Ollama URL must start with http:// or https://", { cause: err });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(`${normalized}/api/tags`, {
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`Ollama returned HTTP ${response.status}`);
+      }
+      const json = (await response.json().catch(() => ({}))) as {
+        models?: Array<{ name?: string; model?: string }>;
+      };
+      const models = Array.isArray(json.models)
+        ? json.models.map((m) => m.name ?? m.model ?? "").filter(Boolean)
+        : [];
+      return models;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error("Ollama request timed out", { cause: err });
+      }
+      const message = err instanceof Error ? err.message : "Failed to list Ollama models";
+      throw new Error(message, { cause: err });
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 }
 
@@ -997,6 +1168,7 @@ app.whenReady().then(() => {
     return net.fetch(`file://${resolvedPath}`);
   });
 
+  initLogger().catch(console.error);
   db = initDatabase();
   createWindow();
   registerIpcHandlers();
