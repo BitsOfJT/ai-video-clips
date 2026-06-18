@@ -26,7 +26,7 @@ const electronAPI = {
 
 vi.stubGlobal("window", { electronAPI });
 
-let useAppStore: any;
+let useAppStore: typeof import("../../src/renderer/store/useAppStore").useAppStore;
 
 beforeAll(async () => {
   const storeModule = await import("../../src/renderer/store/useAppStore");

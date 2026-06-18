@@ -1,3 +1,5 @@
+import type { OpenDialogOptions } from "electron";
+
 export interface VideoMetadata {
   durationSec: number;
   width: number;
@@ -116,6 +118,8 @@ export interface AppSettings {
   ollamaBaseUrl: string;
   ollamaTextModel: string;
   ollamaVisionModel: string;
+  /** Custom FFmpeg binary path (empty string = use system PATH). */
+  ffmpegPath: string;
 }
 
 /** Renderer -> main settings write. `geminiApiKey` is encrypted at rest and omitted from reads. */
@@ -125,6 +129,7 @@ export interface UpdateSettingsInput {
   ollamaBaseUrl?: string;
   ollamaTextModel?: string;
   ollamaVisionModel?: string;
+  ffmpegPath?: string;
 }
 
 export interface Project {
@@ -171,7 +176,10 @@ export type ElectronChannel =
   | "export:progress"
   | "export:complete"
   | "export:error"
-  | "shell:showItem";
+  | "shell:showItem"
+  | "ffmpeg:validate"
+  | "dialog:openFile"
+  | "ollama:listModels";
 
 export interface ElectronAPI {
   invoke: <T>(channel: ElectronChannel, ...args: unknown[]) => Promise<T>;
@@ -185,10 +193,21 @@ export interface ElectronAPI {
   onExportProgress: (callback: (payload: ExportProgressPayload) => void) => void;
   onExportComplete: (callback: (payload: ExportCompletePayload) => void) => void;
   onExportError: (callback: (payload: ExportErrorPayload) => void) => void;
+  openFileDialog: (options: OpenDialogOptions) => Promise<string | null>;
   removeAllListeners: (channel: ElectronChannel) => void;
 }
 
 declare global {
+  interface DataTransferItem {
+    /** File System Access API handle for dropped items (may be unavailable in some packaged Electron builds). */
+    getAsFileSystemHandle(): Promise<FileSystemHandle | null>;
+  }
+
+  // Augment FileSystemHandle when lib.dom.d.ts only exposes the base interface.
+  interface FileSystemFileHandle extends FileSystemHandle {
+    getFile(): Promise<File>;
+  }
+
   interface Window {
     electronAPI: ElectronAPI;
   }

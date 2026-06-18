@@ -44,14 +44,10 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
 
   const [brief, setBrief] = useState(project?.creative_brief ?? "");
   const [videoType, setVideoType] = useState<VideoType>(project?.video_type ?? "podcast");
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
 
-  // Reset editing mode when the selected clip changes or is closed
-  useEffect(() => {
-    if (!selectedClipId) {
-      setIsEditing(false);
-    }
-  }, [selectedClipId]);
+  // Editing state is reset whenever there is no selected clip.
+  const isEditing = !!selectedClipId && isEditorOpen;
 
   // Load persisted clips and current settings when the project changes.
   useEffect(() => {
@@ -131,14 +127,14 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
               <EditorPanel
                 clip={selectedClip}
                 project={project}
-                onClose={() => setIsEditing(false)}
+                onClose={() => setIsEditorOpen(false)}
               />
             ) : (
               <PreviewPlayer
                 clip={selectedClip}
                 project={project}
                 onClose={() => setSelectedClipId(null)}
-                onEdit={() => setIsEditing(true)}
+                onEdit={() => setIsEditorOpen(true)}
               />
             )
           ) : null;

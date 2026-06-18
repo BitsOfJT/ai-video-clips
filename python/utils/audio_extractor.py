@@ -8,17 +8,19 @@ Provides FFmpeg-based audio extraction from arbitrary video files into a
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 
-def extract_audio(video_path: str, output_dir: str | None = None) -> str:
+def extract_audio(video_path: str, output_dir: str | None = None, ffmpeg_path: str = "ffmpeg") -> str:
     """Extract a 16 kHz mono WAV audio track from a video file.
 
     Args:
         video_path: Absolute or relative path to the input video.
         output_dir: Directory for the output WAV. Defaults to the directory
             containing the input video.
+        ffmpeg_path: Path to the FFmpeg binary. Defaults to "ffmpeg" (system PATH).
 
     Returns:
         The absolute path to the generated WAV file.
@@ -38,8 +40,11 @@ def extract_audio(video_path: str, output_dir: str | None = None) -> str:
     stem = video_file.stem
     output_path = destination_dir / f"{stem}_audio.wav"
 
+    if not shutil.which(ffmpeg_path):
+        raise RuntimeError(f"FFmpeg binary not found at path: {ffmpeg_path}")
+
     command = [
-        "ffmpeg",
+        ffmpeg_path,
         "-i",
         str(video_file),
         "-vn",              # Disable video stream.

@@ -196,17 +196,18 @@ Clips are sorted by final score and presented in a "Top Picks" grid.
 - [x] Build `PreviewPlayer` with 9:16 crop simulation overlay, loop-within-clip playback, Escape-to-close, and score + reasoning display. Backed by a hardened `app-video://` custom protocol (CSP `media-src app-video:`).
 - [x] Clip selection state in the Zustand store (`selectedClipId`); `AnalysisControls` mounts `PreviewPlayer` when a clip is selected.
 
-### Phase 5: Auto-Edit & Export
-- [ ] Package `editor.py` as executable.
-- [ ] Implement ASS subtitle generation from transcript (karaoke highlighting).
-- [ ] Build FFmpeg pipeline: trim → crop → subtitle burn-in → encode.
-- [ ] Build `EditorPanel` for manual crop/trim adjustments.
-- [ ] Build `ExportQueue` with batch rendering and progress bars.
-- [ ] Save exported clips to user-selected output folder.
+### Phase 5: Auto-Edit & Export ✅ COMPLETE
+> *All Phase 5 items were implemented as part of the Phase 4 PR (`feature/phase-4-editor-export`).*
+- [x] Package `editor.py` as executable — PyInstaller-built `assets/bin/editor`.
+- [x] Implement ASS subtitle generation from transcript (karaoke highlighting) — `generate_ass_subtitles()` in `python/editor.py`.
+- [x] Build FFmpeg pipeline: trim → crop → subtitle burn-in → encode — full pipeline in `python/editor.py`.
+- [x] Build `EditorPanel` for manual crop/trim adjustments — `src/renderer/components/EditorPanel.tsx`.
+- [x] Build `ExportQueue` with batch rendering and progress bars — `src/renderer/components/ExportQueue.tsx`.
+- [x] Save exported clips to user-selected output folder — native save dialog in `export:start` IPC handler.
 
 ### Phase 6: Polish & Cross-Platform Packaging
 - [ ] Settings panel: API keys, Ollama toggle, FFmpeg path override. *(Provider selector + encrypted Gemini key + Ollama URL/models shipped in Phase 3; FFmpeg path override still pending.)*
-- [ ] Error handling and logging for all Python subprocesses.
+- [x] Error handling and logging for all Python subprocesses (Security validated & hardened).
 - [ ] macOS `.dmg` packaging.
 - [ ] Windows `.exe` packaging (Inno Setup or NSIS installer).
 - [ ] Test on both platforms with sample videos.
@@ -311,7 +312,7 @@ Similar structure adapted for text-based vision models. The prompt includes a de
 3. ✅ Package faster-whisper transcriber + transcription pipeline (Phase 2).
 4. ✅ Build the Creative Brief, Video Type selector, and Gemini/Ollama analysis pipeline (Phase 3).
 5. ✅ Implement ranking, thumbnails, and the clip preview player (Phase 4).
-6. 🔄 Auto-edit & export — trim, 9:16 crop, karaoke captions, FFmpeg render queue (Phase 5).
+6. ✅ Auto-edit & export — trim, 9:16 crop, karaoke captions, FFmpeg render queue (Phase 5).
 7. 🔄 Bundle FFmpeg for macOS & Windows + settings/error handling + `.dmg`/`.exe` packaging (Phase 6).
 
 ---

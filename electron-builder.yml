@@ -1,6 +1,6 @@
-appId: com.example.ai-video-clipper
+appId: com.bitsofjt.ai-video-clipper
 productName: AI Video Clipper
-copyright: Copyright © 2026
+copyright: Copyright © 2026 BitsOfJT
 directories:
   output: out
 files:
@@ -17,8 +17,17 @@ mac:
   category: public.app-category.video
   target:
     - target: dmg
-      arch: arm64
+      arch: universal
+  x64ArchFiles: "Contents/Resources/assets/bin/*"
+  mergeASARs: false
 win:
   target:
     - target: nsis
       arch: x64
+nsis:
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "AI Video Clipper"

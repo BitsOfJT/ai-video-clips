@@ -20,7 +20,8 @@ export async function extractKeyframes(
   startMs: number,
   endMs: number,
   count = 3,
-  scaleWidth = 512
+  scaleWidth = 512,
+  ffmpegPath = "ffmpeg"
 ): Promise<string[]> {
   const startSec = startMs / 1000;
   const durationSec = Math.max(0, (endMs - startMs) / 1000);
@@ -33,7 +34,7 @@ export async function extractKeyframes(
 
     try {
       const { stdout } = await execFileAsync(
-        "ffmpeg",
+        ffmpegPath,
         [
           "-ss", ts.toFixed(3),
           "-i", videoPath,

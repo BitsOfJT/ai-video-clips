@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, KeyRound } from "lucide-react";
+import { Check, KeyRound, FolderOpen, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/renderer/components/ui/card";
 import { Input } from "@/renderer/components/ui/input";
@@ -13,6 +13,7 @@ import {
 } from "@/renderer/components/ui/select";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { AIProvider, UpdateSettingsInput } from "@/types/electron";
+import { IPC_CHANNELS } from "@/constants";
 
 /**
  * Minimal settings panel (pulled forward from Phase 6) for choosing the AI
@@ -29,6 +30,10 @@ export default function SettingsPanel() {
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState("");
   const [ollamaTextModel, setOllamaTextModel] = useState("");
   const [ollamaVisionModel, setOllamaVisionModel] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModelsStatus, setOllamaModelsStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [ffmpegPath, setFfmpegPath] = useState("");
+  const [ffmpegStatus, setFfmpegStatus] = useState<"idle" | "verifying" | "success" | "error">("idle");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -45,16 +50,51 @@ export default function SettingsPanel() {
     setOllamaBaseUrl(settings.ollamaBaseUrl);
     setOllamaTextModel(settings.ollamaTextModel);
     setOllamaVisionModel(settings.ollamaVisionModel);
+    setFfmpegPath(settings.ffmpegPath || "");
   }
 
   const handleSave = async () => {
-    const input: UpdateSettingsInput = { provider, ollamaBaseUrl, ollamaTextModel, ollamaVisionModel };
+    const input: UpdateSettingsInput = { provider, ollamaBaseUrl, ollamaTextModel, ollamaVisionModel, ffmpegPath };
     // Only send the key when the user typed one, so we never clear it accidentally.
     if (geminiApiKey.trim() !== "") input.geminiApiKey = geminiApiKey.trim();
     await saveSettings(input);
     setGeminiApiKey("");
     setSaved(true);
+    setFfmpegStatus("idle");
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const refreshOllamaModels = async () => {
+    setOllamaModelsStatus("loading");
+    try {
+      const models = await window.electronAPI.invoke<string[]>(IPC_CHANNELS.OLLAMA_LIST_MODELS, ollamaBaseUrl);
+      setOllamaModels(models ?? []);
+      setOllamaModelsStatus(models?.length ? "idle" : "error");
+    } catch {
+      setOllamaModels([]);
+      setOllamaModelsStatus("error");
+    }
+  };
+
+  const verifyFfmpeg = async () => {
+    setFfmpegStatus("verifying");
+    try {
+      const isValid = await window.electronAPI.invoke<boolean>(IPC_CHANNELS.FFMPEG_VALIDATE, ffmpegPath);
+      setFfmpegStatus(isValid ? "success" : "error");
+    } catch {
+      setFfmpegStatus("error");
+    }
+  };
+
+  const browseFfmpeg = async () => {
+    const path = await window.electronAPI.invoke<string | null>(
+      IPC_CHANNELS.DIALOG_OPEN_FILE,
+      { properties: ["openFile"] }
+    );
+    if (path) {
+      setFfmpegPath(path);
+      setFfmpegStatus("idle");
+    }
   };
 
   return (
@@ -102,38 +142,115 @@ export default function SettingsPanel() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="ollama-url">Ollama URL</Label>
-              <Input
-                id="ollama-url"
-                value={ollamaBaseUrl}
-                onChange={(e) => setOllamaBaseUrl(e.target.value)}
-                placeholder="http://localhost:11434"
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="ollama-url"
+                  value={ollamaBaseUrl}
+                  onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                  placeholder="http://localhost:11434"
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  onClick={refreshOllamaModels}
+                  disabled={ollamaModelsStatus === "loading"}
+                  title="Refresh models"
+                >
+                  <RefreshCw className={`h-4 w-4 ${ollamaModelsStatus === "loading" ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="ollama-text">Text model</Label>
-                <Input
-                  id="ollama-text"
-                  value={ollamaTextModel}
-                  onChange={(e) => setOllamaTextModel(e.target.value)}
-                  placeholder="llama3.1"
-                />
+                {ollamaModels.length > 0 ? (
+                  <Select value={ollamaTextModel} onValueChange={setOllamaTextModel}>
+                    <SelectTrigger id="ollama-text">
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ollamaModels.map((model) => (
+                        <SelectItem key={model} value={model}>{model}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="ollama-text"
+                    value={ollamaTextModel}
+                    onChange={(e) => setOllamaTextModel(e.target.value)}
+                    placeholder="llama3.1"
+                  />
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ollama-vision">Vision model</Label>
-                <Input
-                  id="ollama-vision"
-                  value={ollamaVisionModel}
-                  onChange={(e) => setOllamaVisionModel(e.target.value)}
-                  placeholder="llama3.2-vision"
-                />
+                {ollamaModels.length > 0 ? (
+                  <Select value={ollamaVisionModel} onValueChange={setOllamaVisionModel}>
+                    <SelectTrigger id="ollama-vision">
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ollamaModels.map((model) => (
+                        <SelectItem key={model} value={model}>{model}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="ollama-vision"
+                    value={ollamaVisionModel}
+                    onChange={(e) => setOllamaVisionModel(e.target.value)}
+                    placeholder="llama3.2-vision"
+                  />
+                )}
               </div>
             </div>
+            {ollamaModelsStatus === "error" && (
+              <p className="text-xs text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                No models found. Make sure Ollama is running at the URL above, or type a model name manually.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground">
               Pull models first, e.g. <code>ollama pull llama3.2-vision</code>.
             </p>
           </div>
         )}
+
+        <hr className="border-border" />
+
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">FFmpeg Path (Optional)</h3>
+            <p className="text-xs text-muted-foreground">
+              By default, the app looks for FFmpeg on your system PATH. If you have a custom installation, specify the absolute path to the FFmpeg binary here.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={ffmpegPath}
+              onChange={(e) => {
+                setFfmpegPath(e.target.value);
+                setFfmpegStatus("idle");
+              }}
+              placeholder="/usr/local/bin/ffmpeg or C:\\ffmpeg\\bin\\ffmpeg.exe"
+              className="flex-1"
+            />
+            <Button variant="outline" size="icon" onClick={browseFfmpeg} title="Browse">
+              <FolderOpen className="h-4 w-4" />
+            </Button>
+            <Button variant="secondary" onClick={verifyFfmpeg} disabled={ffmpegStatus === "verifying"}>
+              {ffmpegStatus === "verifying" ? "..." : "Verify"}
+            </Button>
+          </div>
+          {ffmpegStatus === "success" && (
+            <p className="text-xs text-green-600 flex items-center gap-1"><Check className="h-3 w-3" /> FFmpeg verified successfully.</p>
+          )}
+          {ffmpegStatus === "error" && (
+            <p className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="h-3 w-3" /> Invalid FFmpeg path or binary.</p>
+          )}
+        </div>
 
         <Button onClick={handleSave} className="w-full">
           {saved ? (
