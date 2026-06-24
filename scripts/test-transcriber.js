@@ -24,6 +24,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
+import { getFfmpegCommand } from "./ffmpeg-bin.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -104,7 +105,7 @@ async function main() {
   console.log("\n🎬 Generating test video with FFmpeg...");
 
   const { stdout: ffmpegOut, stderr: ffmpegErr, exitCode: ffmpegCode } = await runCommand(
-    "ffmpeg",
+    getFfmpegCommand(),
     [
       "-f", "lavfi",
       "-i", "testsrc=duration=5:size=320x240:rate=24",

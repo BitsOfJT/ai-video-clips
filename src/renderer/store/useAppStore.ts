@@ -7,6 +7,7 @@ import type {
   UpdateSettingsInput,
   StartAnalysisInput,
   AnalysisStatus,
+  SystemHealthCheck,
 } from "@/types/electron";
 import { IPC_CHANNELS } from "@/constants";
 
@@ -36,6 +37,9 @@ interface AppState {
   exportStatus: Record<string, "idle" | "queued" | "rendering" | "completed" | "failed">; // clipId -> status
   exportError: Record<string, string>;           // clipId -> error message
   exportOutputPaths: Record<string, string>;     // clipId -> output path
+  systemHealth: SystemHealthCheck | null;
+  healthLoading: boolean;
+  checkSystemHealth: () => Promise<void>;
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
   loadProjects: () => Promise<void>;
@@ -145,10 +149,13 @@ export const useAppStore = create<AppState>((set, get) => {
     window.electronAPI.onExportError((payload) => {
       set((state) => {
         const nextQueue = state.exportQueue.filter((id) => id !== payload.clipId);
+        const nextOutputPaths = { ...state.exportOutputPaths };
+        delete nextOutputPaths[payload.clipId];
         return {
           exportQueue: nextQueue,
           exportStatus: { ...state.exportStatus, [payload.clipId]: "failed" },
           exportError: { ...state.exportError, [payload.clipId]: payload.error },
+          exportOutputPaths: nextOutputPaths,
         };
       });
       const currentProjId = get().currentProjectId;
@@ -180,6 +187,33 @@ export const useAppStore = create<AppState>((set, get) => {
     exportStatus: {},
     exportError: {},
     exportOutputPaths: {},
+    systemHealth: null,
+    healthLoading: true,
+
+    checkSystemHealth: async () => {
+      set({ healthLoading: true });
+      try {
+        const result = await invokeIpc<SystemHealthCheck>(IPC_CHANNELS.SYSTEM_HEALTH_CHECK);
+        set({ systemHealth: result, healthLoading: false });
+      } catch (error) {
+        console.error("System health check failed:", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        set({
+          systemHealth: {
+            ready: false,
+            checks: [
+              {
+                ok: false,
+                label: "Health check",
+                path: "",
+                message: `Could not run system health check: ${detail}`,
+              },
+            ],
+          },
+          healthLoading: false,
+        });
+      }
+    },
 
     setProjects: (projects) => set({ projects }),
 
@@ -294,7 +328,21 @@ export const useAppStore = create<AppState>((set, get) => {
     loadClips: async (projectId: string) => {
       try {
         const clips = await invokeIpc<Clip[]>(IPC_CHANNELS.DB_GET_CLIPS, projectId);
-        set((state) => ({ clips: { ...state.clips, [projectId]: clips } }));
+        set((state) => {
+          const exportOutputPaths = { ...state.exportOutputPaths };
+          const exportStatus = { ...state.exportStatus };
+          for (const clip of clips) {
+            if (clip.status === "completed" && clip.output_path) {
+              exportOutputPaths[clip.id] = clip.output_path;
+              exportStatus[clip.id] = "completed";
+            }
+          }
+          return {
+            clips: { ...state.clips, [projectId]: clips },
+            exportOutputPaths,
+            exportStatus,
+          };
+        });
       } catch {
         // Non-fatal: the grid simply stays empty if clips cannot be loaded.
       }

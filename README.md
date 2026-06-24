@@ -1,104 +1,106 @@
-# ai-video-clips
+# AI Video Clipper
 
-**AI-powered desktop video clipper for short-form content.** Import videos, transcribe them locally with Whisper, and clip highlights — all on your machine with no cloud dependency.
+**AI-powered desktop video clipper for short-form content.** Import long-form videos, transcribe locally with Whisper, analyze clips with AI against your creative brief, preview ranked highlights, and export vertical 9:16 MP4s with karaoke captions — all on your machine.
 
-## Tech Stack
+## Download (end users)
 
-- **Frontend**: React 19 + TypeScript + Tailwind v4 + shadcn/ui
-- **Desktop Shell**: Electron 35 (context isolation, secure preload bridge)
-- **State Management**: Zustand
-- **Database**: SQLite via better-sqlite3
-- **Transcription**: faster-whisper (local, CPU, int8 quantized)
-- **Audio Extraction**: FFmpeg
-- **Build Tooling**: Vite + vite-plugin-electron + electron-builder
-- **Testing**: Vitest (TypeScript), pytest (Python), E2E smoke test
+Pre-built installers are published on [GitHub Releases](https://github.com/bitsofjt/ai-video-clips/releases):
 
-## Prerequisites
+| Platform | File | Notes |
+|----------|------|-------|
+| macOS (Apple Silicon) | `.dmg` | Unsigned — right-click the app → **Open** on first launch, or run `xattr -cr "/Applications/AI Video Clipper.app"` |
+| Windows 10/11 (64-bit) | `.exe` installer | Unsigned — click **More info** → **Run anyway** if SmartScreen warns |
 
-- **Node.js** >= 18
-- **npm** >= 9
-- **Python** 3.10+ (for model download, transcriber build, and Python tests)
-- **FFmpeg** installed and available on `PATH` (used for audio extraction and video probing)
-- **PyInstaller** (optional, only needed if building the standalone transcriber binary)
+### Before your first clip
 
-## Installation
+1. **Install Ollama** from [ollama.com](https://ollama.com) (default AI provider, fully local).
+2. Pull the recommended models:
+   ```bash
+   ollama pull llama3.1
+   ollama pull llama3.2-vision
+   ```
+3. Launch AI Video Clipper — the **Setup Check** screen verifies binaries, FFmpeg, and Ollama.
 
-```bash
-# 1. Clone the repository
-git clone <repo-url>
-cd ai-video-clips
+**Optional:** Switch to **Gemini** in Settings and paste a free API key from [Google AI Studio](https://aistudio.google.com/apikey) instead of running Ollama.
 
-# 2. Install Node.js dependencies
-npm install
+### Typical workflow
 
-# 3. Download the faster-whisper base model
-npm run download:models
+1. Drop a video → metadata is probed automatically
+2. **Transcribe** (local faster-whisper, offline)
+3. Enter a **creative brief** + video type → **Analyze** (Ollama or Gemini)
+4. Browse ranked clips → preview → adjust trim/crop
+5. **Export** 1080×1920 MP4 ready for YouTube Shorts / TikTok
 
-# 4. Build the transcriber binary (PyInstaller)
-npm run build:python
-```
+---
 
 ## Development
 
+### Prerequisites
+
+- **Node.js** ≥ 18, **npm** ≥ 9
+- **Python** 3.10+ (model download, PyInstaller builds, pytest)
+- **FFmpeg** on `PATH` (dev only — production builds bundle FFmpeg)
+- **PyInstaller** (installed via `python/requirements.txt`)
+
+### Setup
+
 ```bash
+git clone <repo-url>
+cd ai-video-clips
+npm install
+npm run download:models    # ~150 MB Whisper base model
+npm run build:python       # PyInstaller → assets/bin/transcriber + editor
 npm run dev
 ```
 
-Starts Vite with HMR and launches the Electron app. The renderer is served from the Vite dev server; the main process is compiled on the fly.
-
-## Build
+### Commands
 
 ```bash
-npm run build
+npm run dev            # Electron + Vite HMR
+npm run build          # TypeScript + Vite + electron-builder (needs assets first)
+npm run build:release  # download models + build python + download ffmpeg + package
+npm run typecheck
+npm run lint
+npm run test           # Vitest (main-process utils)
+npm run test:python    # pytest
+npm run test:e2e       # transcriber smoke test (needs built binary + FFmpeg)
+npm run test:editor    # editor smoke test (needs built binary + FFmpeg)
 ```
 
-Runs TypeScript check, Vite production build, and electron-builder to produce a distributable (`.dmg` on macOS, `.exe` installer on Windows).
+### Releasing
 
-## Testing
+Push a version tag to trigger the GitHub Actions release workflow:
 
 ```bash
-npm run test          # Vitest unit tests (main process utilities)
-npm run test:e2e      # E2E smoke test: generates a test video and runs the transcriber
-npm run test:python   # Pytest for Python utilities (audio extractor, transcriber)
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-## Lint & Typecheck
+The workflow builds on **macOS (arm64)** and **Windows (x64)**, runs tests, bundles FFmpeg + Whisper + Python binaries, and uploads installers to GitHub Releases.
 
-```bash
-npm run lint          # ESLint (typescript-eslint + react-hooks + react-refresh)
-npm run typecheck     # TypeScript strict check (no emit)
-```
+See [RELEASE_NOTES.md](./RELEASE_NOTES.md) for v1.0.0 install notes.
 
-## Project Structure
+---
 
-```
-ai-video-clips/
-├── electron/
-│   ├── main.ts          # Main process: window, DB, IPC, ffprobe, transcription
-│   └── preload.ts       # Secure contextBridge (whitelisted IPC channels)
-├── src/
-│   ├── constants.ts     # IPC channels, extensions, window sizes, CSP
-│   ├── types/           # Shared TypeScript types (IPC, Project, etc.)
-│   └── renderer/        # React frontend (Tailwind v4 + shadcn/ui)
-├── python/
-│   ├── transcriber.py   # faster-whisper CLI entrypoint
-│   ├── audio_extractor.py  # FFmpeg-based audio extraction
-│   ├── build.py         # PyInstaller builder
-│   ├── download_models.py  # Model downloader
-│   └── tests/           # Pytest suite
-├── assets/
-│   ├── bin/             # PyInstaller-built transcriber executable
-│   └── models/          # faster-whisper model files
-├── tests/unit/          # Vitest unit tests
-├── scripts/             # E2E smoke test script
-├── vitest.config.ts     # Vitest configuration
-└── vite.config.ts       # Vite + plugin-electron configuration
-```
+## Tech Stack
+
+- **Frontend:** React 19 + TypeScript + Tailwind v4 + shadcn/ui
+- **Desktop:** Electron 35 (context isolation, typed IPC)
+- **State:** Zustand · **Database:** SQLite (better-sqlite3)
+- **Transcription:** faster-whisper (local, bundled)
+- **AI analysis:** Ollama (default) or Gemini (opt-in) — main process, encrypted settings
+- **Export:** FFmpeg + PyInstaller editor binary (trim, 9:16 crop, ASS karaoke burn-in)
+- **Testing:** Vitest, pytest, E2E smoke scripts
 
 ## Phase Status
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Electron + Vite + React scaffold, DB, IPC, video probing | ✅ Complete |
-| 2 | Transcription pipeline (faster-whisper, audio extraction, progress streaming) | ✅ Complete |
-| 3+ | Clip detection, editing, export, UI polish | 🔜 Coming |
+| 1 | Scaffold (Electron, DB, IPC, import) | Complete |
+| 2 | Transcription pipeline | Complete |
+| 3 | Creative brief + AI analysis | Complete |
+| 4 | Ranking, thumbnails, preview | Complete |
+| 5 | Auto-edit & export | Complete |
+| 6 | Packaging, health checks, CI/CD | Complete |
+
+Full product spec: [plan.md](./plan.md) · Agent guide: [AGENTS.md](./AGENTS.md)

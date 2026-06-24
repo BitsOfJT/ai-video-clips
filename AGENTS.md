@@ -116,7 +116,7 @@ npm run test:python # Pytest for Python utilities
 
 ## Constraints
 - Python backend is **partially implemented** — transcriber and audio extractor are done; chunker, analyzer, and editor are Phase 3+.
-- `assets/ffmpeg/` does not exist yet (FFmpeg is expected on system PATH).
+- `assets/ffmpeg/` holds platform FFmpeg binaries (downloaded via `npm run download:ffmpeg` before release builds). Dev mode still falls back to system `PATH` when bundled binaries are absent.
 - `assets/models/` exists after running `npm run download:models`.
 - Test frameworks are configured (Vitest for TypeScript, pytest for Python, E2E smoke test).
 - macOS packaging works (`.dmg`). Windows (`nsis`) configured but not tested.

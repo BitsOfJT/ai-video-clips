@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Play, CheckCircle2, AlertCircle, Loader2, FolderOpen, Trash2, X } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/renderer/components/ui/card";
@@ -12,19 +13,19 @@ export default function ExportQueue() {
   const exportError = useAppStore((state) => state.exportError);
   const exportOutputPaths = useAppStore((state) => state.exportOutputPaths);
   const cancelExport = useAppStore((state) => state.cancelExport);
+  const [revealError, setRevealError] = useState<string | null>(null);
 
-  // We want to list all clips that are in the queue, rendering, completed, or failed.
-  // We can scan through all project clips, or use the exportStatus keys.
+  const projectClipIds = new Set(clips.map((c) => c.id));
   const activeAndCompletedClipIds = Object.keys(exportStatus).filter(
-    (id) => exportStatus[id] !== "idle"
+    (id) => exportStatus[id] !== "idle" && projectClipIds.has(id)
   );
 
-  // Helper to open file in system folder
   const handleOpenFolder = async (filePath: string) => {
+    setRevealError(null);
     try {
       await window.electronAPI.invoke(IPC_CHANNELS.SHELL_SHOW_ITEM, filePath);
-    } catch (err) {
-      console.error("Failed to open file in folder:", err);
+    } catch {
+      setRevealError("Could not open file. It may have been moved or deleted.");
     }
   };
 
@@ -44,13 +45,19 @@ export default function ExportQueue() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {revealError && (
+          <p className="flex items-center gap-1.5 text-xs text-destructive">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {revealError}
+          </p>
+        )}
         <div className="divide-y divide-border rounded-md border border-border bg-muted/20">
           {activeAndCompletedClipIds.map((clipId) => {
             const clip = clips.find((c) => c.id === clipId);
             const status = exportStatus[clipId];
             const percent = exportProgress[clipId] ?? 0;
             const error = exportError[clipId];
-            const outputPath = exportOutputPaths[clipId];
+            const outputPath = exportOutputPaths[clipId] ?? clip?.output_path ?? null;
             const title = clip?.title || `Clip (${clipId.slice(0, 6)})`;
 
             return (

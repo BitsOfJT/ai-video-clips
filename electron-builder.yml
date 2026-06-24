@@ -17,9 +17,7 @@ mac:
   category: public.app-category.video
   target:
     - target: dmg
-      arch: universal
-  x64ArchFiles: "Contents/Resources/assets/bin/*"
-  mergeASARs: false
+      arch: arm64
 win:
   target:
     - target: nsis

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import { getFfmpegCommand } from './ffmpeg-bin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(__dirname, '..');
@@ -33,7 +34,7 @@ async function run() {
 
   console.log('[TEST] Generating test video (5s)...');
   await new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', [
+    const ff = spawn(getFfmpegCommand(), [
       '-y', '-f', 'lavfi', '-i', 'testsrc=duration=5:size=1280x720:rate=30',
       '-f', 'lavfi', '-i', 'sine=frequency=440:duration=5',
       '-c:v', 'libx264', '-c:a', 'aac',

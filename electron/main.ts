@@ -16,6 +16,7 @@ import type {
   UpdateSettingsInput,
   VideoMetadata,
   Clip,
+  SystemHealthCheck,
 } from "../src/types/electron";
 import { CONTENT_SECURITY_POLICY, IPC_CHANNELS, SUPPORTED_VIDEO_EXTENSIONS, WINDOW } from "../src/constants";
 import { getSettings, getGeminiApiKey, updateSettings } from "./settings";
@@ -25,28 +26,43 @@ import type { AnalysisProvider } from "./analysis/providers/types";
 import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
 import { logger, initLogger, friendlyExitMessage } from "./logger";
+import { runSystemHealthCheck } from "./health";
+import {
+  getBundledFfmpegPath,
+  getBundledFfprobePath,
+  getEditorPath,
+  getModelPath,
+  getTranscriberPath,
+} from "./paths";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const execFileAsync = promisify(execFile);
 
-// Helper to resolve FFmpeg path
+// Helper to resolve FFmpeg path (user override → bundled → system PATH in dev)
 function getFfmpegPath(db: Database.Database): string {
   const settings = getSettings(db);
   if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
     return settings.ffmpegPath;
   }
-  return "ffmpeg"; // Fall back to system PATH
+  const bundled = getBundledFfmpegPath();
+  if (bundled) {
+    return bundled;
+  }
+  return "ffmpeg";
 }
 
 function getFfprobePath(db: Database.Database): string {
-  const ffmpegPath = getFfmpegPath(db);
-  if (ffmpegPath !== "ffmpeg") {
-    // Attempt to resolve ffprobe relative to ffmpeg path
-    const dir = path.dirname(ffmpegPath);
+  const settings = getSettings(db);
+  if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
+    const dir = path.dirname(settings.ffmpegPath);
     const ext = process.platform === "win32" ? ".exe" : "";
     const probePath = path.join(dir, `ffprobe${ext}`);
     if (existsSync(probePath)) return probePath;
+  }
+  const bundled = getBundledFfprobePath();
+  if (bundled) {
+    return bundled;
   }
   return "ffprobe";
 }
@@ -209,6 +225,9 @@ function initDatabase(): Database.Database {
   addColumnIfMissing("clips", "crop_w", "crop_w INTEGER DEFAULT -1");
   addColumnIfMissing("clips", "crop_h", "crop_h INTEGER DEFAULT -1");
 
+  // Phase 6: persist export output path for reveal-in-folder after restart
+  addColumnIfMissing("clips", "output_path", "output_path TEXT");
+
   return database;
 }
 
@@ -223,44 +242,7 @@ function requireDatabase(): Database.Database {
 // Transcription
 // ------------------------------------------------------------------------------
 
-/**
- * Returns the absolute path to the bundled transcriber binary.
- * In development, uses the built binary in assets/bin/ relative to the source tree.
- * In production, uses the binary bundled via extraResources.
- */
-function getTranscriberPath(): string {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL;
-  const base = isDev
-    ? path.join(__dirname, "../../assets/bin/transcriber")
-    : path.join(process.resourcesPath, "assets", "bin", "transcriber");
-  return process.platform === "win32" ? `${base}.exe` : base;
-}
-
-/**
- * Returns the absolute path to the bundled Whisper model directory.
- * In development, uses assets/models/whisper-base/ relative to the source tree.
- * In production, uses the model bundled via extraResources.
- */
-function getModelPath(): string {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL;
-  if (isDev) {
-    return path.join(__dirname, "../../assets/models/whisper-base");
-  }
-  return path.join(process.resourcesPath, "assets", "models", "whisper-base");
-}
-
-/**
- * Returns the absolute path to the bundled editor binary.
- * In development, uses the built binary in assets/bin/ relative to the source tree.
- * In production, uses the binary bundled via extraResources.
- */
-function getEditorPath(): string {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL;
-  const base = isDev
-    ? path.join(__dirname, "../../assets/bin/editor")
-    : path.join(process.resourcesPath, "assets", "bin", "editor");
-  return process.platform === "win32" ? `${base}.exe` : base;
-}
+// Path helpers live in electron/paths.ts (getTranscriberPath, getModelPath, getEditorPath).
 
 // ------------------------------------------------------------------------------
 // Video Probing
@@ -431,7 +413,7 @@ async function processNextExportJob(): Promise<void> {
         // Best-effort cleanup of temporary word JSON; ignore failures.
       }
     }
-    database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+    database.prepare("UPDATE clips SET status = 'failed', output_path = NULL WHERE id = ?").run(job.clipId);
     const errorMsg = `Editor binary not found at ${editorPath}. Run 'npm run build:python' first.`;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, { clipId: job.clipId, error: errorMsg });
@@ -502,7 +484,7 @@ async function processNextExportJob(): Promise<void> {
     }
 
     if (code !== 0) {
-      database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+      database.prepare("UPDATE clips SET status = 'failed', output_path = NULL WHERE id = ?").run(job.clipId);
       if (mainWindow && !mainWindow.isDestroyed()) {
         const errorMsg = friendlyExitMessage("editor", code);
         mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, {
@@ -511,7 +493,9 @@ async function processNextExportJob(): Promise<void> {
         });
       }
     } else {
-      database.prepare("UPDATE clips SET status = 'completed' WHERE id = ?").run(job.clipId);
+      database
+        .prepare("UPDATE clips SET status = 'completed', output_path = ? WHERE id = ?")
+        .run(job.outputPath, job.clipId);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC_CHANNELS.EXPORT_COMPLETE, {
           clipId: job.clipId,
@@ -535,7 +519,7 @@ async function processNextExportJob(): Promise<void> {
       }
     }
 
-    database.prepare("UPDATE clips SET status = 'failed' WHERE id = ?").run(job.clipId);
+    database.prepare("UPDATE clips SET status = 'failed', output_path = NULL WHERE id = ?").run(job.clipId);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC_CHANNELS.EXPORT_ERROR, {
         clipId: job.clipId,
@@ -1044,6 +1028,10 @@ function registerIpcHandlers(): void {
       return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.SYSTEM_HEALTH_CHECK, async (): Promise<SystemHealthCheck> => {
+    return runSystemHealthCheck(requireDatabase());
+  });
 
   ipcMain.handle(IPC_CHANNELS.FFMPEG_VALIDATE, async (_event, ffmpegPath: string): Promise<boolean> => {
     try {
