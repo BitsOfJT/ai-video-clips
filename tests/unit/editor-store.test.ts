@@ -107,7 +107,7 @@ describe("Zustand Store — Video Export & Clip Editing", () => {
   });
 
   it("should update queue state and invoke export:start when startExport is called", async () => {
-    mockInvoke.mockResolvedValue(undefined);
+    mockInvoke.mockResolvedValue(true);
 
     await useAppStore.getState().startExport("clip-xyz");
 
@@ -116,7 +116,7 @@ describe("Zustand Store — Video Export & Clip Editing", () => {
     expect(state.exportStatus["clip-xyz"]).toBe("queued");
     expect(state.exportProgress["clip-xyz"]).toBe(0);
     expect(state.exportError["clip-xyz"]).toBe("");
-    expect(mockInvoke).toHaveBeenCalledWith("export:start", "clip-xyz");
+    expect(mockInvoke).toHaveBeenCalledWith("export:start", "clip-xyz", true);
   });
 
   it("should invoke export:cancel when cancelExport is called", async () => {

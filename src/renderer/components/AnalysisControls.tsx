@@ -70,7 +70,7 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
             <div>
               <CardTitle className="text-base">AI Clip Analysis</CardTitle>
               <CardDescription>
-                Find the best short-form clips from your creative brief.
+                Find the best short-form clips based on what you&apos;re looking for.
               </CardDescription>
             </div>
           </div>
@@ -119,7 +119,7 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
           </div>
         )}
 
-        <ClipGrid clips={clips} />
+        <ClipGrid clips={clips} projectId={projectId} />
 
         <ExportQueue />
 

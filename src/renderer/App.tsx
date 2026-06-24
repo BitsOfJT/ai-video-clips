@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Layout from "@/renderer/components/Layout";
 import HomePage from "@/renderer/pages/HomePage";
 import SettingsPage from "@/renderer/pages/SettingsPage";
 import SetupPage from "@/renderer/pages/SetupPage";
-import { useAppStore } from "@/renderer/store/useAppStore";
+import { initIpcListeners, useAppStore } from "@/renderer/store/useAppStore";
 import { Loader2 } from "lucide-react";
 
 export default function App() {
@@ -13,6 +13,10 @@ export default function App() {
   const healthLoading = useAppStore((state) => state.healthLoading);
   const checkSystemHealth = useAppStore((state) => state.checkSystemHealth);
   const [setupDismissed, setSetupDismissed] = useState(false);
+
+  useEffect(() => {
+    initIpcListeners();
+  }, []);
 
   const showSetup = health && !health.ready && !setupDismissed && view !== "settings";
 

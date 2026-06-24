@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { app, BrowserWindow, ipcMain, protocol, net, dialog, shell } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import Database from "better-sqlite3";
 import type {
   AnalysisStatus,
@@ -27,6 +27,14 @@ import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
 import { logger, initLogger, friendlyExitMessage } from "./logger";
 import { runSystemHealthCheck } from "./health";
+import { registerAppVideoHandler, registerAppVideoScheme } from "./app-video-protocol";
+import {
+  buildBatchOutputPaths,
+  buildWordsJsonPath,
+  createExportJobFromClip,
+  markClipQueued,
+  type ExportJobInput,
+} from "./export-helpers";
 import {
   getBundledFfmpegPath,
   getBundledFfprobePath,
@@ -36,6 +44,11 @@ import {
 } from "./paths";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Guard against tooling that sets ELECTRON_RUN_AS_NODE (breaks `import from "electron"`).
+delete process.env.ELECTRON_RUN_AS_NODE;
+
+registerAppVideoScheme();
 
 const execFileAsync = promisify(execFile);
 
@@ -97,11 +110,45 @@ interface ExportJob {
 const exportQueue: ExportJob[] = [];
 let activeExportJob: ExportJob | null = null;
 
+function enqueueExportJob(database: Database.Database, job: ExportJobInput): void {
+  markClipQueued(database, job.clipId);
+  exportQueue.push(job);
+  void processNextExportJob();
+}
+
+async function cancelExportsForClipIds(
+  database: Database.Database,
+  clipIds: Set<string>
+): Promise<void> {
+  if (activeExportJob && clipIds.has(activeExportJob.clipId)) {
+    const child = activeExports.get(activeExportJob.clipId);
+    child?.kill();
+    activeExportJob = null;
+  }
+
+  for (let i = exportQueue.length - 1; i >= 0; i--) {
+    const job = exportQueue[i];
+    if (!clipIds.has(job.clipId)) continue;
+
+    if (job.wordsJsonPath) {
+      try {
+        await unlink(job.wordsJsonPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    exportQueue.splice(i, 1);
+    database.prepare("UPDATE clips SET status = 'suggested' WHERE id = ?").run(job.clipId);
+  }
+}
+
 // ------------------------------------------------------------------------------
 // Window Management
 // ------------------------------------------------------------------------------
 
 function createWindow(): void {
+  const preloadPath = path.join(__dirname, "../preload/preload.cjs");
+
   mainWindow = new BrowserWindow({
     width: WINDOW.WIDTH,
     height: WINDOW.HEIGHT,
@@ -109,7 +156,7 @@ function createWindow(): void {
     minHeight: WINDOW.MIN_HEIGHT,
     titleBarStyle: "hiddenInset",
     webPreferences: {
-      preload: path.join(__dirname, "../preload/preload.js"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -128,7 +175,6 @@ async function loadRenderer(): Promise<void> {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
   } else {
     await mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
@@ -139,7 +185,7 @@ function configureSecurityPolicy(): void {
 
   const isDev = !!process.env.VITE_DEV_SERVER_URL;
   const csp = isDev
-    ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173 ws://localhost:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173; style-src 'self' 'unsafe-inline' http://localhost:5173; img-src 'self' data: http://localhost:5173; connect-src 'self' ws://localhost:5173 http://localhost:5173; media-src app-video:;"
+    ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173 ws://localhost:5173; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173; style-src 'self' 'unsafe-inline' http://localhost:5173 https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: http://localhost:5173; connect-src 'self' ws://localhost:5173 http://localhost:5173; media-src app-video:;"
     : CONTENT_SECURITY_POLICY;
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
@@ -598,6 +644,61 @@ function registerIpcHandlers(): void {
       .all(projectId);
   });
 
+  ipcMain.handle(IPC_CHANNELS.DB_DELETE_PROJECT, async (_event, projectId: string): Promise<void> => {
+    const database = requireDatabase();
+
+    const project = database.prepare("SELECT id FROM projects WHERE id = ?").get(projectId) as
+      | { id: string }
+      | undefined;
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    if (activeAnalyses.has(projectId)) {
+      throw new Error("Analysis in progress — wait for it to finish before deleting.");
+    }
+
+    const transcriptionChild = activeTranscriptions.get(projectId);
+    if (transcriptionChild) {
+      transcriptionChild.kill();
+      activeTranscriptions.delete(projectId);
+    }
+
+    const projectClips = database
+      .prepare("SELECT id FROM clips WHERE project_id = ?")
+      .all(projectId) as Array<{ id: string }>;
+    const clipIds = new Set(projectClips.map((c) => c.id));
+
+    await cancelExportsForClipIds(database, clipIds);
+
+    const userData = app.getPath("userData");
+    try {
+      await unlink(path.join(userData, `transcript-${projectId}.json`));
+    } catch {
+      /* ignore */
+    }
+
+    const thumbnailDir = path.join(userData, "thumbnails");
+    for (const clip of projectClips) {
+      try {
+        await unlink(path.join(thumbnailDir, `${clip.id}.jpg`));
+      } catch {
+        /* ignore */
+      }
+      try {
+        await unlink(path.join(userData, `words-${clip.id}.json`));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const deleteProjectTx = database.transaction(() => {
+      database.prepare("DELETE FROM clips WHERE project_id = ?").run(projectId);
+      database.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+    });
+    deleteProjectTx();
+  });
+
   ipcMain.handle(IPC_CHANNELS.SETTINGS_GET, (): AppSettings => getSettings(requireDatabase()));
 
   ipcMain.handle(IPC_CHANNELS.SETTINGS_SET, (_event, input: UpdateSettingsInput): AppSettings =>
@@ -655,6 +756,11 @@ function registerIpcHandlers(): void {
         ffmpegPath: getFfmpegPath(database),
         onProgress: sendProgress,
       });
+
+      const stillExists = database.prepare("SELECT id FROM projects WHERE id = ?").get(projectId);
+      if (!stillExists) {
+        return;
+      }
 
       persistClips(database, projectId, clips);
       database.prepare("UPDATE projects SET analysis_status = 'completed' WHERE id = ?").run(projectId);
@@ -891,7 +997,9 @@ function registerIpcHandlers(): void {
     database.prepare(`UPDATE clips SET ${setClauses.join(", ")} WHERE id = ?`).run(...params);
   });
 
-  ipcMain.handle(IPC_CHANNELS.EXPORT_START, async (_event, clipId: string): Promise<void> => {
+  ipcMain.handle(
+    IPC_CHANNELS.EXPORT_START,
+    async (_event, clipId: string, includeCaptions = true): Promise<boolean> => {
     const database = requireDatabase();
 
     const clip = database
@@ -913,51 +1021,73 @@ function registerIpcHandlers(): void {
       filters: [{ name: "MP4 Video", extensions: ["mp4"] }],
     });
 
-    if (canceled || !filePath) return;
+    if (canceled || !filePath) return false;
 
-    let wordsJsonPath: string | null = null;
-    if (project.transcript_json) {
-      try {
-        const transcript = JSON.parse(project.transcript_json);
-        const words: Array<Record<string, unknown>> = [];
-        if (transcript.segments) {
-          for (const seg of transcript.segments) {
-            if (seg.words) {
-              for (const w of seg.words) {
-                const wStartMs = (w.start as number) * 1000;
-                const wEndMs = (w.end as number) * 1000;
-                if (wEndMs > (clip.start_ms ?? 0) && wStartMs < (clip.end_ms ?? 0)) {
-                  words.push(w);
-                }
-              }
-            }
-          }
-        }
-        if (words.length > 0) {
-          wordsJsonPath = path.join(app.getPath("userData"), `words-${clipId}.json`);
-          await writeFile(wordsJsonPath, JSON.stringify(words));
-        }
-      } catch (err) {
-        console.error("Failed to extract words for subtitles:", err);
-      }
+    const wordsJsonPath = includeCaptions
+      ? await buildWordsJsonPath(clipId, clip, project)
+      : null;
+    enqueueExportJob(
+      database,
+      createExportJobFromClip(clip, resolvedVideoPath, filePath, wordsJsonPath)
+    );
+    return true;
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.EXPORT_START_BATCH,
+    async (
+      _event,
+      projectId: string,
+      clipIds: string[],
+      includeCaptions = true
+    ): Promise<boolean> => {
+    const database = requireDatabase();
+
+    if (!Array.isArray(clipIds) || clipIds.length === 0) {
+      throw new Error("No clips selected for export");
     }
 
-    database.prepare("UPDATE clips SET status = 'queued' WHERE id = ?").run(clipId);
-    
-    exportQueue.push({
-      clipId,
-      outputPath: filePath,
-      videoPath: resolvedVideoPath,
-      startMs: clip.start_ms ?? 0,
-      endMs: clip.end_ms ?? 0,
-      cropX: clip.crop_x ?? -1,
-      cropY: clip.crop_y ?? -1,
-      cropW: clip.crop_w ?? -1,
-      cropH: clip.crop_h ?? -1,
-      wordsJsonPath,
+    const project = database
+      .prepare("SELECT * FROM projects WHERE id = ?")
+      .get(projectId) as Project | undefined;
+    if (!project) throw new Error("Project not found");
+
+    const clipIdSet = new Set(clipIds);
+    const clips = (database
+      .prepare("SELECT * FROM clips WHERE project_id = ? ORDER BY ai_score DESC")
+      .all(projectId) as Clip[]).filter((c) => clipIdSet.has(c.id));
+
+    if (clips.length === 0) {
+      throw new Error("No clips to export");
+    }
+    if (clips.length !== clipIds.length) {
+      throw new Error("One or more selected clips were not found");
+    }
+
+    if (!mainWindow) throw new Error("Main window not available");
+    const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose Export Folder",
+      properties: ["openDirectory", "createDirectory"],
     });
 
-    void processNextExportJob();
+    if (canceled || !filePaths?.[0]) return false;
+
+    const resolvedVideoPath = await validateVideoPath(project.video_path);
+    const outputPaths = buildBatchOutputPaths(filePaths[0], clips);
+
+    for (const clip of clips) {
+      const outputPath = outputPaths.get(clip.id);
+      if (!outputPath) continue;
+
+      const wordsJsonPath = includeCaptions
+        ? await buildWordsJsonPath(clip.id, clip, project)
+        : null;
+      enqueueExportJob(
+        database,
+        createExportJobFromClip(clip, resolvedVideoPath, outputPath, wordsJsonPath)
+      );
+    }
+    return true;
   });
 
   ipcMain.handle(IPC_CHANNELS.EXPORT_CANCEL, async (_event, clipId: string): Promise<void> => {
@@ -1100,64 +1230,10 @@ function registerIpcHandlers(): void {
 // ------------------------------------------------------------------------------
 
 app.whenReady().then(() => {
-  protocol.handle("app-video", async (request) => {
-    // Strip the custom scheme prefix and decode percent-encoding.
-    // `new URL()` is used so any path traversal sequences ("../..") in the
-    // host or pathname are normalised by the URL parser before we touch them.
-    let filePath: string;
-    try {
-      const parsed = new URL(request.url);
-      // Reconstruct a plain absolute path from host + pathname.
-      // For app-video:///absolute/path the host is empty and pathname is the path.
-      // For app-video://localhost/path host is "localhost" which we discard.
-      filePath = decodeURIComponent(parsed.pathname);
-    } catch {
-      return new Response("Bad request", { status: 400 });
-    }
-
-    // Reject non-absolute paths and anything that still contains traversal sequences
-    // after URL normalisation (extra safety layer).
-    if (!path.isAbsolute(filePath) || filePath.includes("..")) {
-      return new Response("Forbidden", { status: 403 });
-    }
-
-    // Validate extension against the same whitelist used for project imports.
-    const ext = path.extname(filePath).toLowerCase();
-    if (!SUPPORTED_VIDEO_EXTENSIONS.includes(ext)) {
-      return new Response("Forbidden", { status: 403 });
-    }
-
-    // Confirm the path is a readable file that actually exists in the DB as an
-    // imported project video — this is the critical gate that prevents serving
-    // arbitrary files even if the extension check passes.
-    const resolvedPath = path.resolve(filePath);
-    if (resolvedPath !== filePath) {
-      // path.resolve changed something (e.g. symlink, relative segment) — reject.
-      return new Response("Forbidden", { status: 403 });
-    }
-
-    try {
-      await accessPromise(resolvedPath, fsConstants.R_OK);
-    } catch {
-      return new Response("Not found", { status: 404 });
-    }
-
-    // Gate: the requested path must correspond to a known project in the DB.
-    // This prevents an XSS payload in the renderer from reading arbitrary
-    // video-extension files from the filesystem.
-    if (!db) {
-      return new Response("Service unavailable", { status: 503 });
-    }
-    const row = db.prepare("SELECT id FROM projects WHERE video_path = ?").get(resolvedPath);
-    if (!row) {
-      return new Response("Forbidden", { status: 403 });
-    }
-
-    return net.fetch(`file://${resolvedPath}`);
-  });
-
   initLogger().catch(console.error);
   db = initDatabase();
+  registerAppVideoHandler(() => db);
+
   createWindow();
   registerIpcHandlers();
 

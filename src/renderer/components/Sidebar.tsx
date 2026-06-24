@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Clapperboard, Plus, Settings, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Clapperboard, Plus, Settings, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/renderer/lib/utils";
 import { Button } from "@/renderer/components/ui/button";
 import { ProjectStatusDot } from "@/renderer/components/WorkflowStepper";
@@ -13,10 +13,13 @@ export default function Sidebar() {
   const currentProjectId = useAppStore((state) => state.currentProjectId);
   const setCurrentProjectId = useAppStore((state) => state.setCurrentProjectId);
   const loadProjects = useAppStore((state) => state.loadProjects);
+  const deleteProject = useAppStore((state) => state.deleteProject);
   const checkSystemHealth = useAppStore((state) => state.checkSystemHealth);
   const systemHealth = useAppStore((state) => state.systemHealth);
   const view = useAppStore((state) => state.view);
   const setView = useAppStore((state) => state.setView);
+
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -33,6 +36,26 @@ export default function Sidebar() {
     requestAnimationFrame(() => {
       document.getElementById("import-zone")?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
+  };
+
+  const handleDeleteProject = async (
+    e: React.MouseEvent,
+    projectId: string,
+    title: string
+  ) => {
+    e.stopPropagation();
+    setDeleteError(null);
+
+    const confirmed = window.confirm(
+      `Delete "${title || "Untitled Project"}"? Clips and analysis data will be removed. The original video file on disk is not deleted.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteProject(projectId);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "Failed to delete project");
+    }
   };
 
   return (
@@ -65,6 +88,10 @@ export default function Sidebar() {
           </Button>
         </div>
 
+        {deleteError && (
+          <p className="mb-2 px-1 text-xs text-destructive">{deleteError}</p>
+        )}
+
         <div className="space-y-0.5">
           {projects.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/80 bg-muted/20 px-3 py-6 text-center">
@@ -82,31 +109,46 @@ export default function Sidebar() {
               const hasClips =
                 projectClips.length > 0 || project.analysis_status === "completed";
               return (
-                <button
+                <div
                   key={project.id}
-                  onClick={() => selectProject(project.id)}
                   className={cn(
-                    "group w-full rounded-lg px-2.5 py-2.5 text-left text-sm transition-all",
-                    "hover:bg-accent/60",
+                    "group flex items-start gap-1 rounded-lg transition-all",
                     isActive &&
                       "bg-accent/80 ring-1 ring-primary/30 shadow-[inset_3px_0_0_0_hsl(var(--primary))]"
                   )}
                 >
-                  <div className="flex items-center gap-2">
-                    <ProjectStatusDot project={project} hasClips={hasClips} />
-                    <div className="min-w-0 flex-1 truncate font-medium">
-                      {project.title || "Untitled Project"}
+                  <button
+                    type="button"
+                    onClick={() => selectProject(project.id)}
+                    className="min-w-0 flex-1 rounded-lg px-2.5 py-2.5 text-left text-sm hover:bg-accent/60"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ProjectStatusDot project={project} hasClips={hasClips} />
+                      <div className="min-w-0 flex-1 truncate font-medium">
+                        {project.title || "Untitled Project"}
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-1 truncate pl-4 text-[11px] text-muted-foreground">
-                    {project.duration_sec
-                      ? formatDuration(project.duration_sec)
-                      : "Unknown duration"}
-                    {project.width && project.height
-                      ? ` · ${project.width}×${project.height}`
-                      : null}
-                  </div>
-                </button>
+                    <div className="mt-1 truncate pl-4 text-[11px] text-muted-foreground">
+                      {project.duration_sec
+                        ? formatDuration(project.duration_sec)
+                        : "Unknown duration"}
+                      {project.width && project.height
+                        ? ` · ${project.width}×${project.height}`
+                        : null}
+                    </div>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="mt-1.5 h-7 w-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100"
+                    onClick={(e) =>
+                      void handleDeleteProject(e, project.id, project.title ?? "")
+                    }
+                    title="Delete project"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
               );
             })
           )}

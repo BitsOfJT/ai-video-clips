@@ -1,5 +1,7 @@
-import { Clock, Film, Play } from "lucide-react";
+import { Check, Clock, Download, Film, Play } from "lucide-react";
+import { Button } from "@/renderer/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/renderer/components/ui/card";
+import ScoreCriteriaGrid from "@/renderer/components/ScoreCriteriaGrid";
 import { cn } from "@/renderer/lib/utils";
 import { formatDuration } from "@/renderer/lib/utils";
 import type { Clip } from "@/types/electron";
@@ -7,7 +9,10 @@ import type { Clip } from "@/types/electron";
 interface ClipCardProps {
   clip: Clip;
   onSelect: () => void;
+  onExport?: () => void;
   isSelected: boolean;
+  isExportSelected?: boolean;
+  onToggleExportSelect?: () => void;
   compositeScore: number;
   thumbnailB64: string;
 }
@@ -18,18 +23,13 @@ function scoreColor(score: number): string {
   return "bg-muted/80 text-muted-foreground border-border";
 }
 
-const CRITERIA: Array<{ key: keyof Clip; label: string }> = [
-  { key: "hook_strength", label: "Hook" },
-  { key: "brief_relevance", label: "Brief" },
-  { key: "self_containment", label: "Standalone" },
-  { key: "emotional_arc", label: "Emotion" },
-  { key: "platform_fit", label: "Platform" },
-];
-
 export default function ClipCard({
   clip,
   onSelect,
+  onExport,
   isSelected,
+  isExportSelected = false,
+  onToggleExportSelect,
   compositeScore,
   thumbnailB64,
 }: ClipCardProps) {
@@ -47,6 +47,25 @@ export default function ClipCard({
       onClick={onSelect}
     >
       <div className="relative aspect-video w-full overflow-hidden bg-muted">
+        {onToggleExportSelect && (
+          <button
+            type="button"
+            aria-label={isExportSelected ? "Deselect for export" : "Select for export"}
+            aria-pressed={isExportSelected}
+            className={cn(
+              "absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-sm transition-colors",
+              isExportSelected
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-white/40 bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-black/70"
+            )}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExportSelect();
+            }}
+          >
+            {isExportSelected && <Check className="h-3.5 w-3.5" />}
+          </button>
+        )}
         {thumbnailB64 ? (
           <img
             src={`data:image/jpeg;base64,${thumbnailB64}`}
@@ -87,20 +106,23 @@ export default function ClipCard({
             {clip.description}
           </p>
         )}
-        <div className="mt-auto grid grid-cols-5 gap-1">
-          {CRITERIA.map(({ key, label }) => {
-            const v = (clip[key] as number | null) ?? 0;
-            return (
-              <div
-                key={String(key)}
-                className="rounded-md bg-secondary/60 px-1 py-1.5 text-center ring-1 ring-border/40"
-              >
-                <div className="text-xs font-bold tabular-nums text-foreground">{v.toFixed(0)}</div>
-                <div className="text-[9px] leading-tight text-muted-foreground">{label}</div>
-              </div>
-            );
-          })}
+        <div className="mt-auto">
+          <ScoreCriteriaGrid clip={clip} variant="card" />
         </div>
+        {onExport && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-1 w-full gap-1.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onExport();
+            }}
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export MP4
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
