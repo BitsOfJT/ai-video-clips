@@ -216,20 +216,21 @@ describe("getTranscriberPath", () => {
 
   it("should resolve dev path relative to __dirname", () => {
     const result = getTranscriberPath(fakeDir, true);
+    const expected = path.join(fakeDir, "../../assets/bin/transcriber");
     if (process.platform === "win32") {
-      expect(result).toMatch(/transcriber\.exe$/);
+      expect(result).toBe(`${expected}.exe`);
     } else {
-      // path.join("/app/electron", "../../assets/bin/transcriber") normalizes to /assets/bin/transcriber
-      expect(result).toBe("/assets/bin/transcriber");
+      expect(result).toBe(expected);
     }
   });
 
   it("should resolve prod path using process.resourcesPath", () => {
     const result = getTranscriberPath(fakeDir, false);
+    const expected = path.join("/fake/resources", "assets", "bin", "transcriber");
     if (process.platform === "win32") {
-      expect(result).toMatch(/transcriber\.exe$/);
+      expect(result).toBe(`${expected}.exe`);
     } else {
-      expect(result).toBe("/fake/resources/assets/bin/transcriber");
+      expect(result).toBe(expected);
     }
   });
 });
@@ -243,13 +244,14 @@ describe("getModelPath", () => {
 
   it("should resolve dev path relative to __dirname", () => {
     const result = getModelPath(fakeDir, true);
-    // path.join("/app/electron", "../../assets/models/whisper-base") normalizes to /assets/models/whisper-base
-    expect(result).toBe("/assets/models/whisper-base");
+    expect(result).toBe(path.join(fakeDir, "../../assets/models/whisper-base"));
   });
 
   it("should resolve prod path using process.resourcesPath", () => {
     const result = getModelPath(fakeDir, false);
-    expect(result).toBe("/fake/resources/assets/models/whisper-base");
+    expect(result).toBe(
+      path.join("/fake/resources", "assets", "models", "whisper-base"),
+    );
   });
 });
 
@@ -262,19 +264,21 @@ describe("getEditorPath", () => {
 
   it("should resolve dev path relative to __dirname", () => {
     const result = getEditorPath(fakeDir, true);
+    const expected = path.join(fakeDir, "../../assets/bin/editor");
     if (process.platform === "win32") {
-      expect(result).toMatch(/editor\.exe$/);
+      expect(result).toBe(`${expected}.exe`);
     } else {
-      expect(result).toBe("/assets/bin/editor");
+      expect(result).toBe(expected);
     }
   });
 
   it("should resolve prod path using process.resourcesPath", () => {
     const result = getEditorPath(fakeDir, false);
+    const expected = path.join("/fake/resources", "assets", "bin", "editor");
     if (process.platform === "win32") {
-      expect(result).toMatch(/editor\.exe$/);
+      expect(result).toBe(`${expected}.exe`);
     } else {
-      expect(result).toBe("/fake/resources/assets/bin/editor");
+      expect(result).toBe(expected);
     }
   });
 });

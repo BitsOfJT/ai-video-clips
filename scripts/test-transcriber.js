@@ -32,7 +32,9 @@ import { getFfmpegCommand } from "./ffmpeg-bin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const transcriberBin = path.join(repoRoot, "assets", "bin", "transcriber");
+const transcriberBase = path.join(repoRoot, "assets", "bin", "transcriber");
+const transcriberBin =
+  process.platform === "win32" ? `${transcriberBase}.exe` : transcriberBase;
 const modelDir = path.join(repoRoot, "assets", "models", "whisper-base");
 
 // ---------------------------------------------------------------------------

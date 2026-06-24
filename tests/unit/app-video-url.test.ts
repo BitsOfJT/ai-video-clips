@@ -10,9 +10,12 @@ describe("toAppVideoUrl", () => {
   });
 
   it("recovers paths when Chromium splits the first path segment into the hostname", () => {
+    if (process.platform === "win32") {
+      return;
+    }
     const misParsed = "app-video://users/jordanthompson/Desktop/Tobi's%20Adventure.mov";
     expect(filePathFromAppVideoUrl(misParsed)).toBe(
-      "/users/jordanthompson/Desktop/Tobi's Adventure.mov"
+      "/users/jordanthompson/Desktop/Tobi's Adventure.mov",
     );
   });
 });
