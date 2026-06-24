@@ -13,10 +13,16 @@ extraResources:
     to: assets
     filter:
       - '**/*'
+publish:
+  provider: github
+  owner: BitsOfJT
+  repo: ai-video-clips
 mac:
   category: public.app-category.video
   target:
     - target: dmg
+      arch: arm64
+    - target: zip
       arch: arm64
 win:
   target:

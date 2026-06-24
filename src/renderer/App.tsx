@@ -12,11 +12,13 @@ export default function App() {
   const health = useAppStore((state) => state.systemHealth);
   const healthLoading = useAppStore((state) => state.healthLoading);
   const checkSystemHealth = useAppStore((state) => state.checkSystemHealth);
+  const loadUpdateStatus = useAppStore((state) => state.loadUpdateStatus);
   const [setupDismissed, setSetupDismissed] = useState(false);
 
   useEffect(() => {
     initIpcListeners();
-  }, []);
+    void loadUpdateStatus();
+  }, [loadUpdateStatus]);
 
   const showSetup = health && !health.ready && !setupDismissed && view !== "settings";
 

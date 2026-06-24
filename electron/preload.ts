@@ -52,6 +52,9 @@ const electronAPI = {
   onExportError: (callback: (payload: { clipId: string; error: string }) => void) => {
     ipcRenderer.on(IPC_CHANNELS.EXPORT_ERROR, (_, payload) => callback(payload));
   },
+  onUpdateStatus: (callback: (payload: import("../src/types/electron").UpdateStatus) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, (_, payload) => callback(payload));
+  },
   removeAllListeners: (channel: Channel) => {
     if (validChannels.includes(channel)) {
       ipcRenderer.removeAllListeners(channel);
