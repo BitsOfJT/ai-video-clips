@@ -59,7 +59,12 @@ function unzipWindows(zipPath, destDir) {
     if ($probe) { Copy-Item $probe.FullName (Join-Path $dest "ffprobe.exe") -Force }
     Remove-Item $tmp -Recurse -Force
   `;
-  execSync(`powershell -NoProfile -Command "${ps.replace(/"/g, '\\"').replace(/\n/g, " ")}"`, {
+  const command = ps
+    .trim()
+    .split(/\s*\n\s*/)
+    .filter(Boolean)
+    .join("; ");
+  execSync(`powershell -NoProfile -Command "${command.replace(/"/g, '\\"')}"`, {
     stdio: "inherit",
   });
 }
