@@ -79,7 +79,10 @@ jobs:
         with:
           name: ${{ matrix.platform }}-installer
           path: |
-            out/**
+            out/*.dmg
+            out/*.dmg.blockmap
+            out/*Setup*.exe
+            out/*Setup*.exe.blockmap
           if-no-files-found: error
 
   publish:
@@ -94,7 +97,13 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**
+          draft: false
           generate_release_notes: true
+          fail_on_unmatched_files: false
+          files: |
+            artifacts/mac-installer/out/*.dmg
+            artifacts/mac-installer/out/*.dmg.blockmap
+            artifacts/win-installer/out/*Setup*.exe
+            artifacts/win-installer/out/*Setup*.exe.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
