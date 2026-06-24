@@ -1,5 +1,5 @@
 export const APP_NAME = "AI Video Clipper";
-export const APP_VERSION = "1.0.0";
+export const APP_VERSION = "1.0.1";
 
 export const SUPPORTED_VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv", ".avi", ".webm"];
 

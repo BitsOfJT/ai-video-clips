@@ -1,6 +1,6 @@
 {
   "name": "ai-video-clipper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered desktop video clipper for short-form content",
   "type": "module",
   "main": "dist-electron/main/main.js",
