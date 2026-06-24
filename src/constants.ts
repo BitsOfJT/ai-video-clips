@@ -32,6 +32,11 @@ export const IPC_CHANNELS = {
   DIALOG_OPEN_FILE: "dialog:openFile",
   OLLAMA_LIST_MODELS: "ollama:listModels",
   SYSTEM_HEALTH_CHECK: "system:healthCheck",
+  UPDATE_GET_STATUS: "update:getStatus",
+  UPDATE_CHECK: "update:check",
+  UPDATE_DOWNLOAD: "update:download",
+  UPDATE_INSTALL: "update:install",
+  UPDATE_STATUS: "update:status",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
@@ -47,6 +52,7 @@ export const ONE_WAY_IPC_CHANNELS = [
   IPC_CHANNELS.EXPORT_PROGRESS,
   IPC_CHANNELS.EXPORT_COMPLETE,
   IPC_CHANNELS.EXPORT_ERROR,
+  IPC_CHANNELS.UPDATE_STATUS,
 ] as const;
 
 // AI analysis providers. Gemini = free tier (bring-your-own API key);

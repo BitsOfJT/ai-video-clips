@@ -14,6 +14,7 @@ import type {
   Project,
   StartAnalysisInput,
   UpdateSettingsInput,
+  UpdateStatus,
   VideoMetadata,
   Clip,
   SystemHealthCheck,
@@ -28,6 +29,8 @@ import { OllamaProvider } from "./analysis/providers/ollama";
 import { logger, initLogger, friendlyExitMessage } from "./logger";
 import { runSystemHealthCheck } from "./health";
 import { registerAppVideoHandler, registerAppVideoScheme } from "./app-video-protocol";
+import { autoUpdater } from "electron-updater";
+import { createUpdateService, type UpdateService, type AppUpdateEvent } from "./updater";
 import {
   buildBatchOutputPaths,
   buildWordsJsonPath,
@@ -575,6 +578,57 @@ async function processNextExportJob(): Promise<void> {
 
     void processNextExportJob();
   });
+}
+
+// ------------------------------------------------------------------------------
+// Auto-update
+// ------------------------------------------------------------------------------
+
+let updateService: UpdateService | null = null;
+
+function broadcastUpdateStatus(): void {
+  if (!updateService || !mainWindow) {
+    return;
+  }
+  mainWindow.webContents.send(IPC_CHANNELS.UPDATE_STATUS, updateService.getStatus());
+}
+
+function setupUpdateService(): void {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  if (isDev) {
+    return;
+  }
+
+  updateService = createUpdateService({
+    autoUpdater,
+    getVersion: () => app.getVersion(),
+    isDev,
+    platform: process.platform,
+    openExternal: (url) => shell.openExternal(url),
+  });
+
+  const updateEvents: AppUpdateEvent[] = [
+    "checking",
+    "available",
+    "not-available",
+    "progress",
+    "downloaded",
+    "error",
+  ];
+  for (const event of updateEvents) {
+    updateService.on(event, () => {
+      broadcastUpdateStatus();
+    });
+  }
+}
+
+function scheduleStartupUpdateCheck(): void {
+  if (!updateService) {
+    return;
+  }
+  setTimeout(() => {
+    void updateService?.checkForUpdates({ manual: false });
+  }, 5000);
 }
 
 // ------------------------------------------------------------------------------
@@ -1223,6 +1277,33 @@ function registerIpcHandlers(): void {
       clearTimeout(timeout);
     }
   });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_GET_STATUS, (): UpdateStatus => {
+    return (
+      updateService?.getStatus() ?? {
+        currentVersion: app.getVersion(),
+        state: "idle",
+      }
+    );
+  });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, async (_event, manual = true): Promise<void> => {
+    await updateService?.checkForUpdates({ manual });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, async (): Promise<void> => {
+    if (!updateService) {
+      throw new Error("Updates are not available in development mode.");
+    }
+    await updateService.downloadUpdate();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.UPDATE_INSTALL, (): void => {
+    if (!updateService) {
+      throw new Error("Updates are not available in development mode.");
+    }
+    updateService.quitAndInstall();
+  });
 }
 
 // ------------------------------------------------------------------------------
@@ -1236,6 +1317,8 @@ app.whenReady().then(() => {
 
   createWindow();
   registerIpcHandlers();
+  setupUpdateService();
+  scheduleStartupUpdateCheck();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

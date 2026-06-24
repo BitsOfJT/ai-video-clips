@@ -125,6 +125,25 @@ export interface SystemHealthCheck {
   checks: SystemHealthItem[];
 }
 
+export type UpdateState =
+  | "idle"
+  | "checking"
+  | "not-available"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "error"
+  | "installing";
+
+export interface UpdateStatus {
+  currentVersion: string;
+  state: UpdateState;
+  availableVersion?: string | null;
+  downloadProgress?: number | null;
+  error?: string | null;
+  manualDownloadUrl?: string | null;
+}
+
 export interface AppSettings {
   provider: AIProvider;
   /** True when an encrypted Gemini key is stored; the key itself is never returned to the renderer. */
@@ -196,7 +215,12 @@ export type ElectronChannel =
   | "ffmpeg:validate"
   | "dialog:openFile"
   | "ollama:listModels"
-  | "system:healthCheck";
+  | "system:healthCheck"
+  | "update:getStatus"
+  | "update:check"
+  | "update:download"
+  | "update:install"
+  | "update:status";
 
 export interface ElectronAPI {
   invoke: <T>(channel: ElectronChannel, ...args: unknown[]) => Promise<T>;
@@ -210,6 +234,7 @@ export interface ElectronAPI {
   onExportProgress: (callback: (payload: ExportProgressPayload) => void) => void;
   onExportComplete: (callback: (payload: ExportCompletePayload) => void) => void;
   onExportError: (callback: (payload: ExportErrorPayload) => void) => void;
+  onUpdateStatus: (callback: (payload: UpdateStatus) => void) => void;
   openFileDialog: (options: OpenDialogOptions) => Promise<string | null>;
   removeAllListeners: (channel: ElectronChannel) => void;
 }

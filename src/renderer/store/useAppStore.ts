@@ -8,8 +8,10 @@ import type {
   StartAnalysisInput,
   AnalysisStatus,
   SystemHealthCheck,
+  UpdateStatus,
 } from "@/types/electron";
 import { IPC_CHANNELS } from "@/constants";
+import { canInstallUpdate } from "@/renderer/lib/update-helpers";
 
 type ElectronChannel = import("@/types/electron").ElectronChannel;
 
@@ -41,6 +43,9 @@ interface AppState {
   setExportIncludeCaptions: (include: boolean) => void;
   systemHealth: SystemHealthCheck | null;
   healthLoading: boolean;
+  updateStatus: UpdateStatus | null;
+  updateBannerDismissed: boolean;
+  dismissedUpdateVersion: string | null;
   checkSystemHealth: () => Promise<void>;
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
@@ -60,7 +65,14 @@ interface AppState {
   startExport: (clipId: string) => Promise<void>;
   startExportBatch: (projectId: string, clipIds: string[]) => Promise<void>;
   cancelExport: (clipId: string) => Promise<void>;
+  loadUpdateStatus: () => Promise<void>;
+  checkUpdate: () => Promise<void>;
+  downloadUpdate: () => Promise<void>;
+  installUpdate: () => Promise<void>;
+  dismissUpdateBanner: () => void;
 }
+
+export type { AppState };
 
 async function invokeIpc<T>(channel: ElectronChannel, ...args: unknown[]): Promise<T> {
   return window.electronAPI.invoke<T>(channel, ...args);
@@ -174,6 +186,20 @@ function registerIpcListeners(set: ZustandSet, get: ZustandGet): void {
         void get().loadClips(currentProjId);
       }
     });
+
+    window.electronAPI.onUpdateStatus((payload) => {
+      set((state) => {
+        const patch: Partial<AppState> = { updateStatus: payload };
+        if (
+          payload.state === "available" &&
+          payload.availableVersion &&
+          state.dismissedUpdateVersion !== payload.availableVersion
+        ) {
+          patch.updateBannerDismissed = false;
+        }
+        return patch;
+      });
+    });
 }
 
 /** Call after mount when preload has exposed window.electronAPI. */
@@ -208,6 +234,9 @@ export const useAppStore = create<AppState>((set, get) => {
     exportIncludeCaptions: true,
     systemHealth: null,
     healthLoading: true,
+    updateStatus: null,
+    updateBannerDismissed: false,
+    dismissedUpdateVersion: null,
 
     checkSystemHealth: async () => {
       set({ healthLoading: true });
@@ -577,5 +606,49 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       }
     },
+
+    loadUpdateStatus: async () => {
+      try {
+        const status = await invokeIpc<UpdateStatus>(IPC_CHANNELS.UPDATE_GET_STATUS);
+        set({ updateStatus: status });
+      } catch (error) {
+        console.error("Failed to load update status:", error);
+      }
+    },
+
+    checkUpdate: async () => {
+      set({ updateBannerDismissed: false, dismissedUpdateVersion: null });
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.UPDATE_CHECK);
+      } catch (error) {
+        console.error("Update check failed:", error);
+      }
+    },
+
+    downloadUpdate: async () => {
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.UPDATE_DOWNLOAD);
+      } catch (error) {
+        console.error("Update download failed:", error);
+      }
+    },
+
+    installUpdate: async () => {
+      const state = get();
+      if (!canInstallUpdate(state)) {
+        return;
+      }
+      try {
+        await invokeIpc<void>(IPC_CHANNELS.UPDATE_INSTALL);
+      } catch (error) {
+        console.error("Update install failed:", error);
+      }
+    },
+
+    dismissUpdateBanner: () =>
+      set((state) => ({
+        updateBannerDismissed: true,
+        dismissedUpdateVersion: state.updateStatus?.availableVersion ?? state.dismissedUpdateVersion,
+      })),
   };
 });

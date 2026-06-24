@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/renderer/components/ui/select";
 import { useAppStore } from "@/renderer/store/useAppStore";
+import { canInstallUpdate } from "@/renderer/lib/update-helpers";
 import type { AIProvider, UpdateSettingsInput } from "@/types/electron";
 import { IPC_CHANNELS } from "@/constants";
 
@@ -24,6 +25,15 @@ export default function SettingsPanel() {
   const settings = useAppStore((state) => state.settings);
   const loadSettings = useAppStore((state) => state.loadSettings);
   const saveSettings = useAppStore((state) => state.saveSettings);
+  const updateStatus = useAppStore((state) => state.updateStatus);
+  const checkUpdate = useAppStore((state) => state.checkUpdate);
+  const downloadUpdate = useAppStore((state) => state.downloadUpdate);
+  const installUpdate = useAppStore((state) => state.installUpdate);
+  const loadUpdateStatus = useAppStore((state) => state.loadUpdateStatus);
+  const transcriptionProgress = useAppStore((state) => state.transcriptionProgress);
+  const analysisProgress = useAppStore((state) => state.analysisProgress);
+  const exportQueue = useAppStore((state) => state.exportQueue);
+  const exportStatus = useAppStore((state) => state.exportStatus);
 
   const [provider, setProvider] = useState<AIProvider>("ollama");
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -38,7 +48,8 @@ export default function SettingsPanel() {
 
   useEffect(() => {
     void loadSettings();
-  }, [loadSettings]);
+    void loadUpdateStatus();
+  }, [loadSettings, loadUpdateStatus]);
 
   // Seed editable fields when settings first load (or change). Adjusting state
   // during render on an identity change is the React-recommended pattern and
@@ -97,7 +108,93 @@ export default function SettingsPanel() {
     }
   };
 
+  const isMac = typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac");
+  const installAllowed = canInstallUpdate({
+    transcriptionProgress,
+    analysisProgress,
+    exportQueue,
+    exportStatus,
+  });
+
+  const updateState = updateStatus?.state ?? "idle";
+  const currentVersion = updateStatus?.currentVersion ?? "…";
+
+  const updateStatusMessage = (() => {
+    switch (updateState) {
+      case "checking":
+        return "Checking for updates…";
+      case "not-available":
+        return "You're on the latest version.";
+      case "available":
+        return updateStatus?.availableVersion
+          ? `v${updateStatus.availableVersion} is available.`
+          : "An update is available.";
+      case "downloading":
+        return `Downloading… ${updateStatus?.downloadProgress ?? 0}%`;
+      case "downloaded":
+        return "Update downloaded — restart to install.";
+      case "error":
+        return updateStatus?.error ?? "Update check failed.";
+      default:
+        return null;
+    }
+  })();
+
   return (
+    <>
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle>About &amp; Updates</CardTitle>
+        <CardDescription>
+          Current version: v{currentVersion}
+          {isMac && (
+            <span className="mt-1 block">
+              Updates on Mac open the download page. Install the new .dmg to update.
+            </span>
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void checkUpdate()}
+            disabled={updateState === "checking" || updateState === "downloading"}
+          >
+            <RefreshCw
+              className={`mr-1.5 h-4 w-4 ${updateState === "checking" ? "animate-spin" : ""}`}
+            />
+            Check for updates
+          </Button>
+          {updateState === "available" && (
+            <Button variant="secondary" onClick={() => void downloadUpdate()}>
+              {isMac ? "Download from GitHub" : "Download update"}
+            </Button>
+          )}
+          {updateState === "downloaded" && !isMac && (
+            <Button onClick={() => void installUpdate()} disabled={!installAllowed}>
+              Restart to install
+            </Button>
+          )}
+        </div>
+        {updateStatusMessage && (
+          <p
+            className={`text-sm ${
+              updateState === "error" ? "text-destructive flex items-center gap-1" : "text-muted-foreground"
+            }`}
+          >
+            {updateState === "error" && <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
+            {updateStatusMessage}
+          </p>
+        )}
+        {!installAllowed && updateState === "downloaded" && (
+          <p className="text-xs text-muted-foreground">
+            Finish transcription, analysis, or export before restarting.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+
     <Card>
       <CardHeader>
         <CardTitle>AI Provider</CardTitle>
@@ -263,5 +360,6 @@ export default function SettingsPanel() {
         </Button>
       </CardContent>
     </Card>
+    </>
   );
 }
