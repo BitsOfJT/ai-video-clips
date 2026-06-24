@@ -39,9 +39,9 @@ class TestEditorUtilities:
     @pytest.mark.parametrize(
         "path_str,expected",
         [
-            ("C:\\path\\to\\sub.ass", "C\\:/path/to/sub.ass"),
-            ("/usr/local/share/sub.ass", "/usr/local/share/sub.ass"),
-            ("path'with'quote.ass", "path'\\\\''with'\\\\''quote.ass"),
+            ("C:\\path\\to\\sub.ass", "filename='C:/path/to/sub.ass'"),
+            ("/usr/local/share/sub.ass", "filename='/usr/local/share/sub.ass'"),
+            ("path'with'quote.ass", "filename='path''with''quote.ass'"),
         ],
     )
     def test_escape_subtitle_path(self, path_str: str, expected: str) -> None:
