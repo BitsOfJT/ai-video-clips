@@ -13,6 +13,10 @@ assets/models/*
 !assets/models/.gitkeep
 assets/bin/*
 !assets/bin/.gitkeep
+assets/ffmpeg/macos/*
+!assets/ffmpeg/macos/.gitkeep
+assets/ffmpeg/windows/*
+!assets/ffmpeg/windows/.gitkeep
 venv/
 .venv-pyinstaller/
 __pycache__/

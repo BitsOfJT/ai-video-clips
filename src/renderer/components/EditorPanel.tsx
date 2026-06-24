@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Play, Pause, Save, Film, Move } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
+import ExportCaptionsToggle from "@/renderer/components/ExportCaptionsToggle";
 import { Input } from "@/renderer/components/ui/input";
 import { Label } from "@/renderer/components/ui/label";
 import { Textarea } from "@/renderer/components/ui/textarea";
 import { useAppStore } from "@/renderer/store/useAppStore";
+import { toAppVideoUrl } from "@/renderer/lib/app-video-url";
 import type { Clip, Project } from "@/types/electron";
 
 interface EditorPanelProps {
@@ -136,7 +138,7 @@ export default function EditorPanel({ clip, project, onClose }: EditorPanelProps
     onClose();
   };
 
-  const videoSrc = `app-video://${project.video_path}`;
+  const videoSrc = toAppVideoUrl(project.video_path);
   const clipDurationSec = Math.max(0, (endMs - startMs) / 1000);
   const currentElapsedSec = Math.max(0, currentTime - startMs / 1000);
 
@@ -351,6 +353,7 @@ export default function EditorPanel({ clip, project, onClose }: EditorPanelProps
 
       {/* Action Buttons */}
       <div className="shrink-0 border-t border-border p-4 bg-muted/40 space-y-2">
+        <ExportCaptionsToggle />
         <Button onClick={handleSave} variant="outline" className="w-full flex items-center justify-center gap-1.5">
           <Save className="h-4 w-4" />
           Save Settings

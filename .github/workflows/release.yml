@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python build dependencies
+        run: pip install -r python/requirements.txt
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Quality gates
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run test:python
+
+      - name: Build Python binaries
+        run: |
+          npm run download:models
+          npm run build:python
+
+      - name: Bundle FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg
+          mkdir -p assets/ffmpeg/macos
+          cp "$(brew --prefix)/bin/ffmpeg" assets/ffmpeg/macos/
+          cp "$(brew --prefix)/bin/ffprobe" assets/ffmpeg/macos/
+          chmod +x assets/ffmpeg/macos/*
+
+      - name: Bundle FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: npm run download:ffmpeg
+        shell: bash
+
+      - name: E2E smoke tests
+        run: npm run test:e2e && npm run test:editor
+        shell: bash
+
+      - name: Package installers
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-installer
+          path: |
+            out/**
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

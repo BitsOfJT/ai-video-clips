@@ -93,6 +93,7 @@ export interface Clip {
   crop_y: number | null;
   crop_w: number | null;
   crop_h: number | null;
+  output_path: string | null;
   created_at: string;
 }
 
@@ -109,6 +110,19 @@ export interface ExportCompletePayload {
 export interface ExportErrorPayload {
   clipId: string;
   error: string;
+}
+
+export interface SystemHealthItem {
+  ok: boolean;
+  label: string;
+  path: string;
+  message?: string;
+  models?: string[];
+}
+
+export interface SystemHealthCheck {
+  ready: boolean;
+  checks: SystemHealthItem[];
 }
 
 export interface AppSettings {
@@ -158,6 +172,7 @@ export type ElectronChannel =
   | "video:probeMetadata"
   | "db:getProjects"
   | "db:createProject"
+  | "db:deleteProject"
   | "db:getClips"
   | "transcription:start"
   | "transcription:progress"
@@ -172,6 +187,7 @@ export type ElectronChannel =
   | "clip:getThumbnail"
   | "clip:update"
   | "export:start"
+  | "export:startBatch"
   | "export:cancel"
   | "export:progress"
   | "export:complete"
@@ -179,7 +195,8 @@ export type ElectronChannel =
   | "shell:showItem"
   | "ffmpeg:validate"
   | "dialog:openFile"
-  | "ollama:listModels";
+  | "ollama:listModels"
+  | "system:healthCheck";
 
 export interface ElectronAPI {
   invoke: <T>(channel: ElectronChannel, ...args: unknown[]) => Promise<T>;

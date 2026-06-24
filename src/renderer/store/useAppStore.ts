@@ -7,6 +7,7 @@ import type {
   UpdateSettingsInput,
   StartAnalysisInput,
   AnalysisStatus,
+  SystemHealthCheck,
 } from "@/types/electron";
 import { IPC_CHANNELS } from "@/constants";
 
@@ -36,6 +37,11 @@ interface AppState {
   exportStatus: Record<string, "idle" | "queued" | "rendering" | "completed" | "failed">; // clipId -> status
   exportError: Record<string, string>;           // clipId -> error message
   exportOutputPaths: Record<string, string>;     // clipId -> output path
+  exportIncludeCaptions: boolean;
+  setExportIncludeCaptions: (include: boolean) => void;
+  systemHealth: SystemHealthCheck | null;
+  healthLoading: boolean;
+  checkSystemHealth: () => Promise<void>;
   setProjects: (projects: Project[]) => void;
   setCurrentProjectId: (id: string | null) => void;
   loadProjects: () => Promise<void>;
@@ -50,7 +56,9 @@ interface AppState {
   loadSettings: () => Promise<void>;
   saveSettings: (input: UpdateSettingsInput) => Promise<void>;
   updateClip: (clipId: string, updates: Partial<Clip>) => Promise<void>;
+  deleteProject: (projectId: string) => Promise<void>;
   startExport: (clipId: string) => Promise<void>;
+  startExportBatch: (projectId: string, clipIds: string[]) => Promise<void>;
   cancelExport: (clipId: string) => Promise<void>;
 }
 
@@ -58,14 +66,21 @@ async function invokeIpc<T>(channel: ElectronChannel, ...args: unknown[]): Promi
   return window.electronAPI.invoke<T>(channel, ...args);
 }
 
-// Register one-way IPC listeners only once, even if the module is re-executed by Vite HMR.
+// Register one-way IPC listeners only once after preload exposes electronAPI.
 let listenersRegistered = false;
 
-export const useAppStore = create<AppState>((set, get) => {
-  if (!listenersRegistered) {
-    listenersRegistered = true;
+type ZustandSet = (
+  partial: AppState | Partial<AppState> | ((state: AppState) => AppState | Partial<AppState>)
+) => void;
+type ZustandGet = () => AppState;
 
-    window.electronAPI.onTranscriptionProgress((payload) => {
+function registerIpcListeners(set: ZustandSet, get: ZustandGet): void {
+  if (listenersRegistered || typeof window.electronAPI === "undefined") {
+    return;
+  }
+  listenersRegistered = true;
+
+  window.electronAPI.onTranscriptionProgress((payload) => {
       set((state) => ({
         transcriptionProgress: { ...state.transcriptionProgress, [payload.projectId]: payload.percent },
       }));
@@ -145,10 +160,13 @@ export const useAppStore = create<AppState>((set, get) => {
     window.electronAPI.onExportError((payload) => {
       set((state) => {
         const nextQueue = state.exportQueue.filter((id) => id !== payload.clipId);
+        const nextOutputPaths = { ...state.exportOutputPaths };
+        delete nextOutputPaths[payload.clipId];
         return {
           exportQueue: nextQueue,
           exportStatus: { ...state.exportStatus, [payload.clipId]: "failed" },
           exportError: { ...state.exportError, [payload.clipId]: payload.error },
+          exportOutputPaths: nextOutputPaths,
         };
       });
       const currentProjId = get().currentProjectId;
@@ -156,8 +174,14 @@ export const useAppStore = create<AppState>((set, get) => {
         void get().loadClips(currentProjId);
       }
     });
-  }
+}
 
+/** Call after mount when preload has exposed window.electronAPI. */
+export function initIpcListeners(): void {
+  registerIpcListeners(useAppStore.setState, useAppStore.getState);
+}
+
+export const useAppStore = create<AppState>((set, get) => {
   return {
     projects: [],
     currentProjectId: null,
@@ -175,11 +199,40 @@ export const useAppStore = create<AppState>((set, get) => {
     settings: null,
     selectedClipId: null,
     setSelectedClipId: (id) => set({ selectedClipId: id }),
+    setExportIncludeCaptions: (include) => set({ exportIncludeCaptions: include }),
     exportQueue: [],
     exportProgress: {},
     exportStatus: {},
     exportError: {},
     exportOutputPaths: {},
+    exportIncludeCaptions: true,
+    systemHealth: null,
+    healthLoading: true,
+
+    checkSystemHealth: async () => {
+      set({ healthLoading: true });
+      try {
+        const result = await invokeIpc<SystemHealthCheck>(IPC_CHANNELS.SYSTEM_HEALTH_CHECK);
+        set({ systemHealth: result, healthLoading: false });
+      } catch (error) {
+        console.error("System health check failed:", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        set({
+          systemHealth: {
+            ready: false,
+            checks: [
+              {
+                ok: false,
+                label: "Health check",
+                path: "",
+                message: `Could not run system health check: ${detail}`,
+              },
+            ],
+          },
+          healthLoading: false,
+        });
+      }
+    },
 
     setProjects: (projects) => set({ projects }),
 
@@ -294,7 +347,21 @@ export const useAppStore = create<AppState>((set, get) => {
     loadClips: async (projectId: string) => {
       try {
         const clips = await invokeIpc<Clip[]>(IPC_CHANNELS.DB_GET_CLIPS, projectId);
-        set((state) => ({ clips: { ...state.clips, [projectId]: clips } }));
+        set((state) => {
+          const exportOutputPaths = { ...state.exportOutputPaths };
+          const exportStatus = { ...state.exportStatus };
+          for (const clip of clips) {
+            if (clip.status === "completed" && clip.output_path) {
+              exportOutputPaths[clip.id] = clip.output_path;
+              exportStatus[clip.id] = "completed";
+            }
+          }
+          return {
+            clips: { ...state.clips, [projectId]: clips },
+            exportOutputPaths,
+            exportStatus,
+          };
+        });
       } catch {
         // Non-fatal: the grid simply stays empty if clips cannot be loaded.
       }
@@ -334,6 +401,62 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    deleteProject: async (projectId) => {
+      await invokeIpc<void>(IPC_CHANNELS.DB_DELETE_PROJECT, projectId);
+
+      set((state) => {
+        const projectClips = state.clips[projectId] ?? [];
+        const clipIdSet = new Set(projectClips.map((c) => c.id));
+
+        const nextClips = { ...state.clips };
+        delete nextClips[projectId];
+
+        const nextExportQueue = state.exportQueue.filter((id) => !clipIdSet.has(id));
+        const nextExportProgress = { ...state.exportProgress };
+        const nextExportStatus = { ...state.exportStatus };
+        const nextExportError = { ...state.exportError };
+        const nextExportOutputPaths = { ...state.exportOutputPaths };
+        for (const clipId of clipIdSet) {
+          delete nextExportProgress[clipId];
+          delete nextExportStatus[clipId];
+          delete nextExportError[clipId];
+          delete nextExportOutputPaths[clipId];
+        }
+
+        const nextTranscriptionProgress = { ...state.transcriptionProgress };
+        const nextTranscriptionError = { ...state.transcriptionError };
+        delete nextTranscriptionProgress[projectId];
+        delete nextTranscriptionError[projectId];
+
+        const nextAnalysisProgress = { ...state.analysisProgress };
+        const nextAnalysisStage = { ...state.analysisStage };
+        const nextAnalysisError = { ...state.analysisError };
+        delete nextAnalysisProgress[projectId];
+        delete nextAnalysisStage[projectId];
+        delete nextAnalysisError[projectId];
+
+        const deletedCurrent = state.currentProjectId === projectId;
+        const deletedSelected = projectClips.some((c) => c.id === state.selectedClipId);
+
+        return {
+          projects: state.projects.filter((p) => p.id !== projectId),
+          clips: nextClips,
+          currentProjectId: deletedCurrent ? null : state.currentProjectId,
+          selectedClipId: deletedSelected ? null : state.selectedClipId,
+          exportQueue: nextExportQueue,
+          exportProgress: nextExportProgress,
+          exportStatus: nextExportStatus,
+          exportError: nextExportError,
+          exportOutputPaths: nextExportOutputPaths,
+          transcriptionProgress: nextTranscriptionProgress,
+          transcriptionError: nextTranscriptionError,
+          analysisProgress: nextAnalysisProgress,
+          analysisStage: nextAnalysisStage,
+          analysisError: nextAnalysisError,
+        };
+      });
+    },
+
     startExport: async (clipId) => {
       set((state) => {
         if (state.exportQueue.includes(clipId)) return {};
@@ -346,7 +469,21 @@ export const useAppStore = create<AppState>((set, get) => {
       });
 
       try {
-        await invokeIpc<void>(IPC_CHANNELS.EXPORT_START, clipId);
+        const started = await invokeIpc<boolean>(
+          IPC_CHANNELS.EXPORT_START,
+          clipId,
+          get().exportIncludeCaptions
+        );
+        if (!started) {
+          set((state) => {
+            const nextQueue = state.exportQueue.filter((id) => id !== clipId);
+            const nextStatus = { ...state.exportStatus };
+            delete nextStatus[clipId];
+            const nextProgress = { ...state.exportProgress };
+            delete nextProgress[clipId];
+            return { exportQueue: nextQueue, exportStatus: nextStatus, exportProgress: nextProgress };
+          });
+        }
       } catch (error) {
         set((state) => {
           const nextQueue = state.exportQueue.filter((id) => id !== clipId);
@@ -358,6 +495,65 @@ export const useAppStore = create<AppState>((set, get) => {
               [clipId]: error instanceof Error ? error.message : "Export failed to start",
             },
           };
+        });
+      }
+    },
+
+    startExportBatch: async (projectId, clipIds) => {
+      if (clipIds.length === 0) return;
+
+      set((state) => {
+        const nextQueue = [...state.exportQueue];
+        const nextStatus = { ...state.exportStatus };
+        const nextProgress = { ...state.exportProgress };
+        const nextError = { ...state.exportError };
+
+        for (const clipId of clipIds) {
+          if (nextQueue.includes(clipId)) continue;
+          nextQueue.push(clipId);
+          nextStatus[clipId] = "queued";
+          nextProgress[clipId] = 0;
+          nextError[clipId] = "";
+        }
+
+        return {
+          exportQueue: nextQueue,
+          exportStatus: nextStatus,
+          exportProgress: nextProgress,
+          exportError: nextError,
+        };
+      });
+
+      try {
+        const started = await invokeIpc<boolean>(
+          IPC_CHANNELS.EXPORT_START_BATCH,
+          projectId,
+          clipIds,
+          get().exportIncludeCaptions
+        );
+        if (!started) {
+          set((state) => {
+            const nextQueue = state.exportQueue.filter((id) => !clipIds.includes(id));
+            const nextStatus = { ...state.exportStatus };
+            const nextProgress = { ...state.exportProgress };
+            for (const clipId of clipIds) {
+              delete nextStatus[clipId];
+              delete nextProgress[clipId];
+            }
+            return { exportQueue: nextQueue, exportStatus: nextStatus, exportProgress: nextProgress };
+          });
+        }
+      } catch (error) {
+        set((state) => {
+          const nextQueue = state.exportQueue.filter((id) => !clipIds.includes(id));
+          const nextStatus = { ...state.exportStatus };
+          const nextError = { ...state.exportError };
+          for (const clipId of clipIds) {
+            nextStatus[clipId] = "failed";
+            nextError[clipId] =
+              error instanceof Error ? error.message : "Batch export failed to start";
+          }
+          return { exportQueue: nextQueue, exportStatus: nextStatus, exportError: nextError };
         });
       }
     },

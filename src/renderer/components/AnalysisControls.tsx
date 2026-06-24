@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Wand2, AlertCircle } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/renderer/components/ui/card";
+import { Progress } from "@/renderer/components/ui/progress";
 import CreativeBriefInput from "@/renderer/components/CreativeBriefInput";
 import VideoTypeSelector from "@/renderer/components/VideoTypeSelector";
 import ClipGrid from "@/renderer/components/ClipGrid";
@@ -24,11 +25,6 @@ const STAGE_LABEL: Record<AnalysisStatus, string> = {
   failed: "Failed",
 };
 
-/**
- * Creative-brief + video-type + run controls for AI clip analysis. Mirrors
- * TranscriptionControls: gated on a completed transcript, streams progress, and
- * renders the resulting clip grid.
- */
 export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
   const project = useAppStore((state) => state.projects.find((p) => p.id === projectId));
   const startAnalysis = useAppStore((state) => state.startAnalysis);
@@ -46,10 +42,8 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
   const [videoType, setVideoType] = useState<VideoType>(project?.video_type ?? "podcast");
   const [isEditorOpen, setIsEditorOpen] = useState(false);
 
-  // Editing state is reset whenever there is no selected clip.
   const isEditing = !!selectedClipId && isEditorOpen;
 
-  // Load persisted clips and current settings when the project changes.
   useEffect(() => {
     void loadClips(projectId);
     void loadSettings();
@@ -61,62 +55,71 @@ export default function AnalysisControls({ projectId }: AnalysisControlsProps) {
   const providerLabel =
     settings?.provider === "gemini"
       ? settings.hasGeminiKey
-        ? "Gemini (cloud)"
-        : "Gemini — no API key set"
-      : "Ollama (local)";
+        ? "Gemini"
+        : "Gemini — no API key"
+      : "Ollama";
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Wand2 className="h-5 w-5" />
-          AI Clip Analysis
-        </CardTitle>
-        <CardDescription>
-          Find the best short-form clips based on your creative brief. Provider: {providerLabel}.
-        </CardDescription>
+    <Card className="surface-card overflow-hidden">
+      <CardHeader className="border-b border-border/60 pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <Wand2 className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base">AI Clip Analysis</CardTitle>
+              <CardDescription>
+                Find the best short-form clips based on what you&apos;re looking for.
+              </CardDescription>
+            </div>
+          </div>
+          <span className="rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+            {providerLabel}
+          </span>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-6 pt-6">
         {!transcriptReady && (
-          <p className="text-sm text-muted-foreground">
-            Transcribe the video first — analysis needs the transcript.
-          </p>
+          <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+            Complete transcription first — analysis needs the full transcript.
+          </div>
         )}
 
-        <CreativeBriefInput value={brief} onChange={setBrief} disabled={isRunning} />
-        <VideoTypeSelector value={videoType} onChange={setVideoType} disabled={isRunning} />
+        <div className="grid gap-5 lg:grid-cols-2">
+          <CreativeBriefInput value={brief} onChange={setBrief} disabled={isRunning} />
+          <VideoTypeSelector value={videoType} onChange={setVideoType} disabled={isRunning} />
+        </div>
 
         <Button
           onClick={() => startAnalysis({ projectId, creativeBrief: brief, videoType })}
           disabled={!transcriptReady || isRunning}
-          className="w-full"
+          className="w-full sm:w-auto sm:min-w-[200px]"
+          size="lg"
         >
           {isRunning ? "Analyzing…" : clips.length > 0 ? "Re-run Analysis" : "Find Clips"}
         </Button>
 
         {isRunning && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{stage ? STAGE_LABEL[stage] : "Starting…"}</span>
-              <span>{progress ?? 0}%</span>
+          <div className="space-y-2 rounded-lg bg-muted/30 p-4 ring-1 ring-border/60">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">
+                {stage ? STAGE_LABEL[stage] : "Starting…"}
+              </span>
+              <span className="tabular-nums font-medium">{progress ?? 0}%</span>
             </div>
-            <div className="h-2 w-full rounded-full bg-secondary">
-              <div
-                className="h-2 rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${progress ?? 0}%` }}
-              />
-            </div>
+            <Progress value={progress ?? 0} className="h-2" />
           </div>
         )}
 
         {error && (
-          <div className="flex items-center gap-2 text-sm text-destructive">
-            <AlertCircle className="h-4 w-4" />
+          <div className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive ring-1 ring-destructive/20">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             {error}
           </div>
         )}
 
-        <ClipGrid clips={clips} />
+        <ClipGrid clips={clips} projectId={projectId} />
 
         <ExportQueue />
 

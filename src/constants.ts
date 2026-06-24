@@ -1,5 +1,5 @@
 export const APP_NAME = "AI Video Clipper";
-export const APP_VERSION = "0.1.0";
+export const APP_VERSION = "1.0.0";
 
 export const SUPPORTED_VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv", ".avi", ".webm"];
 
@@ -7,6 +7,7 @@ export const IPC_CHANNELS = {
   VIDEO_PROBE_METADATA: "video:probeMetadata",
   DB_GET_PROJECTS: "db:getProjects",
   DB_CREATE_PROJECT: "db:createProject",
+  DB_DELETE_PROJECT: "db:deleteProject",
   DB_GET_CLIPS: "db:getClips",
   TRANSCRIPTION_START: "transcription:start",
   TRANSCRIPTION_PROGRESS: "transcription:progress",
@@ -21,6 +22,7 @@ export const IPC_CHANNELS = {
   CLIP_GET_THUMBNAIL: "clip:getThumbnail",
   CLIP_UPDATE: "clip:update",
   EXPORT_START: "export:start",
+  EXPORT_START_BATCH: "export:startBatch",
   EXPORT_CANCEL: "export:cancel",
   EXPORT_PROGRESS: "export:progress",
   EXPORT_COMPLETE: "export:complete",
@@ -29,6 +31,7 @@ export const IPC_CHANNELS = {
   FFMPEG_VALIDATE: "ffmpeg:validate",
   DIALOG_OPEN_FILE: "dialog:openFile",
   OLLAMA_LIST_MODELS: "ollama:listModels",
+  SYSTEM_HEALTH_CHECK: "system:healthCheck",
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
@@ -85,4 +88,4 @@ export const WINDOW = {
 } as const;
 
 export const CONTENT_SECURITY_POLICY =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src app-video:;";
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; media-src app-video:;";

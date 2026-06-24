@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Play, Pause, Edit, Download } from "lucide-react";
 import { Button } from "@/renderer/components/ui/button";
+import ExportCaptionsToggle from "@/renderer/components/ExportCaptionsToggle";
+import ScoreCriteriaGrid from "@/renderer/components/ScoreCriteriaGrid";
 import { cn } from "@/renderer/lib/utils";
 import { computeCompositeScore } from "@/renderer/lib/scoring";
+import { toAppVideoUrl } from "@/renderer/lib/app-video-url";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { Clip, Project } from "@/types/electron";
 
@@ -25,14 +28,6 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const CRITERIA: Array<{ key: keyof Clip; label: string }> = [
-  { key: "hook_strength", label: "Hook" },
-  { key: "brief_relevance", label: "Brief" },
-  { key: "self_containment", label: "Standalone" },
-  { key: "emotional_arc", label: "Emotion" },
-  { key: "platform_fit", label: "Platform" },
-];
-
 export default function PreviewPlayer({ clip, project, onClose, onEdit }: PreviewPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const startExport = useAppStore((state) => state.startExport);
@@ -48,6 +43,7 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
   const endSec = (clip.end_ms ?? 0) / 1000;
   const durationSec = Math.max(0, endSec - startSec);
   const score = computeCompositeScore(clip);
+  const videoSrc = toAppVideoUrl(project.video_path);
 
   // Calculate crop geometry
   const cropW = videoHeight > 0 ? Math.round(videoHeight * (9 / 16)) : 0;
@@ -70,10 +66,17 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
   function handleLoadedMetadata() {
     const v = videoRef.current;
     if (!v) return;
-    v.currentTime = startSec;
     if (v.videoWidth > 0) {
       setVideoWidth(v.videoWidth);
       setVideoHeight(v.videoHeight);
+    }
+  }
+
+  function handleCanPlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (Math.abs(v.currentTime - startSec) > 0.25) {
+      v.currentTime = startSec;
     }
   }
 
@@ -92,8 +95,10 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      v.play();
-      setIsPlaying(true);
+      void v
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     } else {
       v.pause();
       setIsPlaying(false);
@@ -122,9 +127,10 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
         <div className="relative overflow-hidden aspect-video">
           <video
             ref={videoRef}
-            src={`app-video://${project.video_path}`}
+            src={videoSrc}
             className="w-full h-full object-contain"
             onLoadedMetadata={handleLoadedMetadata}
+            onCanPlay={handleCanPlay}
             onTimeUpdate={handleTimeUpdate}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
@@ -173,21 +179,7 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
               </span>
             </div>
 
-            <div className="grid grid-cols-5 gap-1 text-center">
-              {CRITERIA.map(({ key, label }) => {
-                const v = (clip[key] as number | null) ?? 0;
-                return (
-                  <div key={String(key)} className="rounded bg-secondary/50 px-1 py-1.5">
-                    <div className="text-xs font-semibold tabular-nums text-foreground">
-                      {v.toFixed(0)}
-                    </div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
-                      {label}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <ScoreCriteriaGrid clip={clip} variant="panel" />
           </div>
 
           {clip.description && (
@@ -212,6 +204,7 @@ export default function PreviewPlayer({ clip, project, onClose, onEdit }: Previe
 
       {/* Action Buttons Panel */}
       <div className="shrink-0 border-t border-border p-4 bg-muted/40 space-y-2">
+        <ExportCaptionsToggle />
         <Button onClick={onEdit} variant="outline" className="w-full flex items-center justify-center gap-1.5">
           <Edit className="h-4 w-4" />
           Edit Clip

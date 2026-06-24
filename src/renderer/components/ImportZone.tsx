@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Upload } from "lucide-react";
+import { Loader2, Upload, Video } from "lucide-react";
 import { cn } from "@/renderer/lib/utils";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import { SUPPORTED_VIDEO_EXTENSIONS } from "@/constants";
@@ -14,7 +14,11 @@ const ACCEPT_FILTER = SUPPORTED_VIDEO_EXTENSIONS.join(",");
 const MISSING_PATH_ERROR =
   "Drag and drop couldn't read the file path. Please use the click-to-import button or ensure the app has Full Disk Access.";
 
-export default function ImportZone() {
+interface ImportZoneProps {
+  variant?: "hero" | "compact";
+}
+
+export default function ImportZone({ variant = "hero" }: ImportZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,6 +26,8 @@ export default function ImportZone() {
   const importProject = useAppStore((state) => state.importProject);
   const isImporting = useAppStore((state) => state.isImporting);
   const importError = useAppStore((state) => state.importError);
+
+  const isCompact = variant === "compact";
 
   const importVideoFile = useCallback(
     async (filePath: string) => {
@@ -56,94 +62,43 @@ export default function ImportZone() {
     }
   }, []);
 
-  const resolveDroppedPaths = useCallback(
-    async (event: React.DragEvent): Promise<string[]> => {
-      const candidates: string[] = [];
+  const resolveDroppedPaths = useCallback(async (event: React.DragEvent): Promise<string[]> => {
+    const candidates: string[] = [];
+    const items = event.dataTransfer.items ? Array.from(event.dataTransfer.items) : [];
 
-      // Strategy 1: File System Access API handles (best metadata, no real path,
-      // but gives us a name to validate extension and fall back if needed).
-      const items = event.dataTransfer.items
-        ? Array.from(event.dataTransfer.items)
-        : [];
-      console.log(
-        `[ImportZone] drop received: dataTransfer.items=${items.length}, files=${event.dataTransfer.files?.length ?? 0}`
-      );
+    for (const item of items) {
+      if (item.kind !== "file") continue;
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        console.log(
-          `[ImportZone] item[${i}] kind=${item.kind}, type=${item.type}`
-        );
-
-        if (item.kind !== "file") {
-          continue;
-        }
-
-        // Try the File System Access API first.
-        if (typeof item.getAsFileSystemHandle === "function") {
-          try {
-            const handle = await item.getAsFileSystemHandle();
-            console.log(
-              `[ImportZone] item[${i}] getAsFileSystemHandle kind=${handle?.kind}`
-            );
-            if (handle && handle.kind === "file") {
-              const fileHandle = handle as FileSystemFileHandle;
-              const file = await fileHandle.getFile();
-              console.log(
-                `[ImportZone] item[${i}] FileSystemFileHandle file.name=${file.name}, path=${(file as File & { path?: string }).path ?? "<missing>"}`
-              );
-              const pathFromFile = (file as File & { path?: string }).path;
-              if (pathFromFile) {
-                candidates.push(pathFromFile);
-              } else {
-                // We don't have a real path from a handle, but we can still
-                // validate by name and surface the missing-path error.
-                const fakePath = `/${file.name}`;
-                if (isSupportedVideo(fakePath)) {
-                  console.warn(
-                    `[ImportZone] item[${i}] supported video via handle but no usable path`
-                  );
-                }
-              }
-            }
-          } catch (err) {
-            console.warn(
-              `[ImportZone] item[${i}] getAsFileSystemHandle failed:`,
-              err
-            );
+      if (typeof item.getAsFileSystemHandle === "function") {
+        try {
+          const handle = await item.getAsFileSystemHandle();
+          if (handle?.kind === "file") {
+            const fileHandle = handle as FileSystemFileHandle;
+            const file = await fileHandle.getFile();
+            const pathFromFile = (file as File & { path?: string }).path;
+            if (pathFromFile) candidates.push(pathFromFile);
           }
-        }
-
-        // Strategy 2: legacy getAsFile() fallback.
-        const file = item.getAsFile();
-        if (file) {
-          const pathFromFile = (file as File & { path?: string }).path;
-          console.log(
-            `[ImportZone] item[${i}] getAsFile name=${file.name}, path=${pathFromFile ?? "<missing>"}`
-          );
-          if (pathFromFile) {
-            candidates.push(pathFromFile);
-          }
+        } catch {
+          // Fall through to legacy strategies.
         }
       }
 
-      // Strategy 3: plain files array (covers older browsers / test mocks).
-      const files = Array.from(event.dataTransfer.files ?? []);
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      const file = item.getAsFile();
+      if (file) {
         const pathFromFile = (file as File & { path?: string }).path;
-        console.log(
-          `[ImportZone] files[${i}] name=${file.name}, path=${pathFromFile ?? "<missing>"}`
-        );
-        if (pathFromFile && !candidates.includes(pathFromFile)) {
-          candidates.push(pathFromFile);
-        }
+        if (pathFromFile) candidates.push(pathFromFile);
       }
+    }
 
-      return candidates;
-    },
-    []
-  );
+    for (const file of Array.from(event.dataTransfer.files ?? [])) {
+      const pathFromFile = (file as File & { path?: string }).path;
+      if (pathFromFile && !candidates.includes(pathFromFile)) {
+        candidates.push(pathFromFile);
+      }
+    }
+
+    return candidates;
+  }, []);
 
   const handleDrop = useCallback(
     async (event: React.DragEvent) => {
@@ -154,10 +109,7 @@ export default function ImportZone() {
       setSelectionError(null);
 
       const paths = await resolveDroppedPaths(event);
-      console.log(`[ImportZone] resolved candidate paths:`, paths);
-
       const videoPaths = paths.filter(isSupportedVideo);
-      console.log(`[ImportZone] supported video paths:`, videoPaths);
 
       if (paths.length === 0) {
         setSelectionError(MISSING_PATH_ERROR);
@@ -200,13 +152,9 @@ export default function ImportZone() {
           },
         ],
       });
-      if (filePath) {
-        void importVideoFile(filePath);
-      }
+      if (filePath) void importVideoFile(filePath);
       return;
     }
-
-    // Fallback for non-Electron environments (e.g. tests, browsers).
     fileInputRef.current?.click();
   }, [importVideoFile]);
 
@@ -220,8 +168,11 @@ export default function ImportZone() {
     [handleClick]
   );
 
+  const displayError = selectionError || importError;
+
   return (
     <div
+      id="import-zone"
       role="button"
       tabIndex={0}
       aria-label="Import video"
@@ -232,10 +183,13 @@ export default function ImportZone() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       className={cn(
-        "flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-12 text-center transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "group relative flex cursor-pointer flex-col items-center justify-center text-center transition-all duration-200",
+        "rounded-xl border-2 border-dashed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        isCompact ? "flex-row gap-4 px-5 py-4" : "px-8 py-14 sm:py-16",
         isDragging
-          ? "border-primary bg-primary/5"
-          : "border-border bg-card hover:border-muted-foreground"
+          ? "border-primary bg-primary/8 import-zone-active"
+          : "border-border/80 bg-card/40 hover:border-primary/40 hover:bg-card/60",
+        isCompact && !isDragging && "surface-card border-solid"
       )}
     >
       <input
@@ -248,28 +202,40 @@ export default function ImportZone() {
         onChange={handleFileInputChange}
       />
 
-      <div className="mb-4 rounded-full bg-secondary p-4">
-        <Upload className="h-8 w-8 text-secondary-foreground" />
+      <div
+        className={cn(
+          "flex shrink-0 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20 transition-transform group-hover:scale-105",
+          isCompact ? "h-11 w-11 rounded-xl" : "mb-5 h-16 w-16"
+        )}
+      >
+        {isImporting ? (
+          <Loader2 className={cn("animate-spin text-primary", isCompact ? "h-5 w-5" : "h-8 w-8")} />
+        ) : isCompact ? (
+          <Video className="h-5 w-5 text-primary" />
+        ) : (
+          <Upload className="h-8 w-8 text-primary" />
+        )}
       </div>
 
-      <h3 className="mb-2 text-lg font-semibold">Drop your video here</h3>
-
-      <p className="mb-4 max-w-sm text-sm text-muted-foreground">
-        Click or drag and drop a video file to import it. Supported formats:{" "}
-        {SUPPORTED_VIDEO_EXTENSIONS.join(", ")}.
-      </p>
-
-      {isImporting && (
-        <p className="text-sm text-muted-foreground">Importing video...</p>
-      )}
-
-      {importError && (
-        <p className="mt-2 text-sm text-destructive">{importError}</p>
-      )}
-
-      {selectionError && (
-        <p className="mt-2 text-sm text-destructive">{selectionError}</p>
-      )}
+      <div className={cn(isCompact ? "min-w-0 flex-1 text-left" : "max-w-md")}>
+        <h3 className={cn("font-semibold", isCompact ? "text-sm" : "mb-2 text-lg")}>
+          {isImporting
+            ? "Importing video…"
+            : isCompact
+              ? "Import another video"
+              : "Drop your video here"}
+        </h3>
+        <p className={cn("text-muted-foreground", isCompact ? "text-xs" : "text-sm")}>
+          {isCompact
+            ? "Click or drag to add a new project"
+            : `Click or drag and drop. Supports ${SUPPORTED_VIDEO_EXTENSIONS.join(", ")}.`}
+        </p>
+        {displayError && (
+          <p className={cn("text-destructive", isCompact ? "mt-1 text-xs" : "mt-3 text-sm")}>
+            {displayError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
