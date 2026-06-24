@@ -5,7 +5,7 @@ directories:
   output: out
 files:
   - dist-electron/main/main.js
-  - dist-electron/preload/preload.js
+  - dist-electron/preload/preload.cjs
   - dist/**
   - package.json
 extraResources:
