@@ -45,19 +45,23 @@ async function run() {
 
   console.log(`[TEST] Running editor binary...`);
   
-  await new Promise((resolve, reject) => {
-    const editorArgs = [
-      '--video-path', testVideo,
-      '--output-path', outputVideo,
-      '--start-ms', '1000',
-      '--end-ms', '4000',
-      '--crop-x', '320',
-      '--crop-y', '0',
-      '--crop-w', '405',
-      '--crop-h', '720'
-    ];
-    console.log(`Args: ${editorArgs.join(' ')}`);
+  const editorArgs = [
+    '--video-path', testVideo,
+    '--output-path', outputVideo,
+    '--start-ms', '1000',
+    '--end-ms', '4000',
+    '--crop-x', '320',
+    '--crop-y', '0',
+    '--crop-w', '405',
+    '--crop-h', '720',
+  ];
+  const ffmpegPath = getFfmpegCommand();
+  if (ffmpegPath !== 'ffmpeg') {
+    editorArgs.push('--ffmpeg-path', ffmpegPath);
+  }
+  console.log(`Args: ${editorArgs.join(' ')}`);
 
+  await new Promise((resolve, reject) => {
     const editorProcess = spawn(EDITOR_BIN, editorArgs);
     
     editorProcess.stdout.on('data', (data) => {
