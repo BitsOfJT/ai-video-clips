@@ -90,6 +90,7 @@ function runElectronLoadTest() {
       cwd: repoRoot,
       env,
       stdio: "inherit",
+      shell: process.platform === "win32",
     });
 
     child.on("error", reject);
