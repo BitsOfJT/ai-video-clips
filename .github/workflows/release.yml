@@ -54,6 +54,7 @@ jobs:
       - name: Bundle FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: |
+          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
           brew install ffmpeg
           mkdir -p assets/ffmpeg/macos
           cp "$(brew --prefix)/bin/ffmpeg" assets/ffmpeg/macos/
@@ -70,7 +71,7 @@ jobs:
         shell: bash
 
       - name: Package installers
-        run: npm run build
+        run: npm run build:package
 
       - name: Verify production renderer loads
         run: npm run test:renderer

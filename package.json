@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
+    "build:package": "tsc && vite build && electron-builder --publish never",
     "build:release": "npm run download:models && npm run build:python && npm run download:ffmpeg && npm run build",
     "download:ffmpeg": "node scripts/download-ffmpeg.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
