@@ -66,7 +66,13 @@ function runElectronLoadTest() {
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.VITE_DEV_SERVER_URL;
 
-    const child = spawn(electronBin, [path.join(repoRoot, "scripts", "test-renderer-load.mjs")], {
+    const electronArgs = [
+      // Required on Linux CI runners (SUID sandbox is not configured in GHA).
+      "--no-sandbox",
+      path.join(repoRoot, "scripts", "test-renderer-load.mjs"),
+    ];
+
+    const child = spawn(electronBin, electronArgs, {
       cwd: repoRoot,
       env,
       stdio: "inherit",
