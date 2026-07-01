@@ -72,6 +72,10 @@ jobs:
       - name: Package installers
         run: npm run build
 
+      - name: Verify production renderer loads
+        run: npm run test:renderer
+        shell: bash
+
       - name: Upload artifacts (macOS)
         if: matrix.platform == 'mac'
         uses: actions/upload-artifact@v4

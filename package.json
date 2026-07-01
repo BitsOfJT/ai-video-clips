@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/test-transcriber.js",
+    "test:renderer": "node scripts/test-packaged-renderer.js",
     "test:editor": "node scripts/test-editor.js",
     "test:python": "python3 -m pytest python/tests/ -v",
     "download:models": "python3 python/download_models.py",

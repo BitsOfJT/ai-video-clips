@@ -45,6 +45,7 @@ import {
   getModelPath,
   getTranscriberPath,
 } from "./paths";
+import { getProductionRendererHtmlPath } from "./renderer-path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -149,6 +150,31 @@ async function cancelExportsForClipIds(
 // Window Management
 // ------------------------------------------------------------------------------
 
+function attachRendererDiagnostics(win: BrowserWindow): void {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    logger.error("renderer", "Page failed to load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+    if (!isDev) {
+      void dialog.showErrorBox(
+        "Failed to load application",
+        `The app window could not load. Try reinstalling the app.\n\n(${errorDescription}, code ${errorCode})`
+      );
+    }
+  });
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    logger.error("renderer", "Render process gone", {
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+  });
+}
+
 function createWindow(): void {
   const preloadPath = path.join(__dirname, "../preload/preload.cjs");
 
@@ -157,7 +183,7 @@ function createWindow(): void {
     height: WINDOW.HEIGHT,
     minWidth: WINDOW.MIN_WIDTH,
     minHeight: WINDOW.MIN_HEIGHT,
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -165,8 +191,19 @@ function createWindow(): void {
     },
   });
 
-  void loadRenderer();
+  attachRendererDiagnostics(mainWindow);
   configureSecurityPolicy();
+
+  void loadRenderer().catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.error("renderer", "loadRenderer failed", { message });
+    if (!process.env.VITE_DEV_SERVER_URL) {
+      void dialog.showErrorBox(
+        "Failed to load application",
+        `The app window could not load. Try reinstalling the app.\n\n(${message})`
+      );
+    }
+  });
 
   mainWindow.on("closed", () => {
     mainWindow = null;
@@ -178,9 +215,11 @@ async function loadRenderer(): Promise<void> {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else {
-    await mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    return;
   }
+
+  const htmlPath = getProductionRendererHtmlPath(app.getAppPath());
+  await mainWindow.loadFile(htmlPath);
 }
 
 function configureSecurityPolicy(): void {

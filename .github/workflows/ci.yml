@@ -31,3 +31,8 @@ jobs:
       - run: npm run lint
       - run: npm run test
       - run: npm run test:python
+
+      - name: Verify production renderer loads
+        run: |
+          npx vite build
+          npm run test:renderer
