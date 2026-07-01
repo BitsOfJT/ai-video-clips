@@ -1,9 +1,9 @@
-import { access, constants as fsConstants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { access } from "node:fs/promises";
 import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import Database from "better-sqlite3";
@@ -19,14 +19,15 @@ import type {
   Clip,
   SystemHealthCheck,
 } from "../src/types/electron";
-import { CONTENT_SECURITY_POLICY, IPC_CHANNELS, SUPPORTED_VIDEO_EXTENSIONS, WINDOW } from "../src/constants";
+import { CONTENT_SECURITY_POLICY, IPC_CHANNELS, WINDOW } from "../src/constants";
 import { getSettings, getGeminiApiKey, updateSettings } from "./settings";
 import { analyzeProject, type AnalyzedClip } from "./analysis/analyzer";
 import { extractKeyframes } from "./analysis/keyframes";
 import type { AnalysisProvider } from "./analysis/providers/types";
 import { GeminiProvider } from "./analysis/providers/gemini";
 import { OllamaProvider } from "./analysis/providers/ollama";
-import { logger, initLogger, friendlyExitMessage } from "./logger";
+import { friendlyExitMessage } from "./subprocess-errors";
+import { execFileAsync } from "./exec";
 import { runSystemHealthCheck } from "./health";
 import { registerAppVideoHandler, registerAppVideoScheme } from "./app-video-protocol";
 import { autoUpdater } from "electron-updater";
@@ -39,13 +40,13 @@ import {
   type ExportJobInput,
 } from "./export-helpers";
 import {
-  getBundledFfmpegPath,
-  getBundledFfprobePath,
   getEditorPath,
   getModelPath,
   getTranscriberPath,
+  resolveFfmpegPath,
+  resolveFfprobePath,
 } from "./paths";
-import { getProductionRendererHtmlPath } from "./renderer-path";
+import { parseFrameRate, validateVideoPath } from "./video-utils";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,36 +54,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 registerAppVideoScheme();
-
-const execFileAsync = promisify(execFile);
-
-// Helper to resolve FFmpeg path (user override → bundled → system PATH in dev)
-function getFfmpegPath(db: Database.Database): string {
-  const settings = getSettings(db);
-  if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
-    return settings.ffmpegPath;
-  }
-  const bundled = getBundledFfmpegPath();
-  if (bundled) {
-    return bundled;
-  }
-  return "ffmpeg";
-}
-
-function getFfprobePath(db: Database.Database): string {
-  const settings = getSettings(db);
-  if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
-    const dir = path.dirname(settings.ffmpegPath);
-    const ext = process.platform === "win32" ? ".exe" : "";
-    const probePath = path.join(dir, `ffprobe${ext}`);
-    if (existsSync(probePath)) return probePath;
-  }
-  const bundled = getBundledFfprobePath();
-  if (bundled) {
-    return bundled;
-  }
-  return "ffprobe";
-}
 
 let mainWindow: BrowserWindow | null = null;
 let db: Database.Database | null = null;
@@ -98,21 +69,8 @@ const activeAnalyses = new Set<string>();
 // Track active export child processes
 const activeExports = new Map<string, ChildProcess>();
 
-interface ExportJob {
-  clipId: string;
-  outputPath: string;
-  videoPath: string;
-  startMs: number;
-  endMs: number;
-  cropX: number;
-  cropY: number;
-  cropW: number;
-  cropH: number;
-  wordsJsonPath: string | null;
-}
-
-const exportQueue: ExportJob[] = [];
-let activeExportJob: ExportJob | null = null;
+const exportQueue: ExportJobInput[] = [];
+let activeExportJob: ExportJobInput | null = null;
 
 function enqueueExportJob(database: Database.Database, job: ExportJobInput): void {
   markClipQueued(database, job.clipId);
@@ -154,7 +112,7 @@ function attachRendererDiagnostics(win: BrowserWindow): void {
   const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
-    logger.error("renderer", "Page failed to load", {
+    console.error("[renderer] Page failed to load", {
       errorCode,
       errorDescription,
       validatedURL,
@@ -168,7 +126,7 @@ function attachRendererDiagnostics(win: BrowserWindow): void {
   });
 
   win.webContents.on("render-process-gone", (_event, details) => {
-    logger.error("renderer", "Render process gone", {
+    console.error("[renderer] Render process gone", {
       reason: details.reason,
       exitCode: details.exitCode,
     });
@@ -196,7 +154,7 @@ function createWindow(): void {
 
   void loadRenderer().catch((err: unknown) => {
     const message = err instanceof Error ? err.message : String(err);
-    logger.error("renderer", "loadRenderer failed", { message });
+    console.error("[renderer] loadRenderer failed:", message);
     if (!process.env.VITE_DEV_SERVER_URL) {
       void dialog.showErrorBox(
         "Failed to load application",
@@ -218,7 +176,7 @@ async function loadRenderer(): Promise<void> {
     return;
   }
 
-  const htmlPath = getProductionRendererHtmlPath(app.getAppPath());
+  const htmlPath = path.join(app.getAppPath(), "dist", "index.html");
   await mainWindow.loadFile(htmlPath);
 }
 
@@ -338,10 +296,8 @@ function requireDatabase(): Database.Database {
 
 async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
   const database = requireDatabase();
-  const ffprobePath = getFfprobePath(database);
-  
-  logger.subprocess("ffprobe", ffprobePath, ["-show_format", "-show_streams", videoPath]);
-  
+  const ffprobePath = resolveFfprobePath(getSettings(database).ffmpegPath);
+
   let stdout: string;
   try {
     const result = await execFileAsync(ffprobePath, [
@@ -356,7 +312,7 @@ async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
     stdout = result.stdout;
   } catch (err) {
     const execErr = err as { message?: string; code?: string | number | null };
-    logger.error("ffprobe", `Failed to probe video: ${execErr.message ?? "unknown error"}`);
+    console.error("[ffprobe] Failed to probe video:", execErr.message ?? "unknown error");
     const exitCode = typeof execErr.code === "number" ? execErr.code : 1;
     throw new Error(friendlyExitMessage("ffprobe", exitCode), {
       cause: err,
@@ -394,31 +350,6 @@ async function probeVideoMetadata(videoPath: string): Promise<VideoMetadata> {
     fps,
   };
 }
-
-function parseFrameRate(rawRate: string): number {
-  const [numPart, denPart] = rawRate.split("/");
-  const num = Number(numPart) || 0;
-  const den = denPart ? (Number(denPart) || 1) : 1;
-  return den !== 0 ? num / den : 0;
-}
-
-async function validateVideoPath(videoPath: string): Promise<string> {
-  if (!path.isAbsolute(videoPath)) {
-    throw new Error("Invalid video path");
-  }
-
-  const ext = path.extname(videoPath).toLowerCase();
-  if (!SUPPORTED_VIDEO_EXTENSIONS.includes(ext)) {
-    throw new Error("Unsupported video format");
-  }
-
-  const resolvedPath = path.resolve(videoPath);
-  await accessPromise(resolvedPath, fsConstants.R_OK);
-
-  return resolvedPath;
-}
-
-const accessPromise = promisify(access);
 
 // ------------------------------------------------------------------------------
 // Analysis
@@ -525,12 +456,11 @@ async function processNextExportJob(): Promise<void> {
   }
 
   // Pass custom FFmpeg path to editor binary if set
-  const ffmpegPath = getFfmpegPath(database);
+  const ffmpegPath = resolveFfmpegPath(getSettings(database).ffmpegPath);
   if (ffmpegPath !== "ffmpeg") {
     args.push("--ffmpeg-path", ffmpegPath);
   }
 
-  logger.subprocess("editor", editorPath, args);
   const child = spawn(editorPath, args, { detached: false });
   activeExports.set(job.clipId, child);
 
@@ -538,10 +468,9 @@ async function processNextExportJob(): Promise<void> {
   child.stderr?.on("data", (chunk: Buffer) => {
     const text = chunk.toString();
     stderrBuffer += text;
-    // Log non-progress lines to our logger
-    text.split("\n").forEach(line => {
+    text.split("\n").forEach((line) => {
       if (line.trim() && !line.startsWith("PROGRESS:")) {
-        logger.subprocessStderr("editor", line);
+        console.warn("[editor]", line.trim());
       }
     });
     const lines = stderrBuffer.split("\n");
@@ -559,7 +488,9 @@ async function processNextExportJob(): Promise<void> {
   });
 
   child.on("exit", async (code, signal) => {
-    logger.subprocessExit("editor", code, signal);
+    if (code !== 0) {
+      console.error("[editor] Exited", { code, signal });
+    }
     activeExports.delete(job.clipId);
     activeExportJob = null;
 
@@ -846,7 +777,7 @@ function registerIpcHandlers(): void {
         videoPath: resolvedVideoPath,
         creativeBrief,
         videoType,
-        ffmpegPath: getFfmpegPath(database),
+        ffmpegPath: resolveFfmpegPath(getSettings(database).ffmpegPath),
         onProgress: sendProgress,
       });
 
@@ -912,12 +843,11 @@ function registerIpcHandlers(): void {
     }
     
     // Pass custom FFmpeg path to transcriber binary if set (used for audio extraction)
-    const ffmpegPath = getFfmpegPath(database);
+    const ffmpegPath = resolveFfmpegPath(getSettings(database).ffmpegPath);
     if (ffmpegPath !== "ffmpeg") {
       args.push("--ffmpeg-path", ffmpegPath);
     }
 
-    logger.subprocess("transcriber", transcriberPath, args);
     const child = spawn(transcriberPath, args, { detached: false });
     activeTranscriptions.set(projectId, child);
 
@@ -926,10 +856,9 @@ function registerIpcHandlers(): void {
     child.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString();
       stderrBuffer += text;
-      // Log non-progress lines to our logger
-      text.split("\n").forEach(line => {
+      text.split("\n").forEach((line) => {
         if (line.trim() && !line.startsWith("PROGRESS:")) {
-          logger.subprocessStderr("transcriber", line);
+          console.warn("[transcriber]", line.trim());
         }
       });
       const lines = stderrBuffer.split("\n");
@@ -948,7 +877,9 @@ function registerIpcHandlers(): void {
 
     return new Promise<void>((resolve, reject) => {
       child.on("exit", async (code, signal) => {
-        logger.subprocessExit("transcriber", code, signal);
+        if (code !== 0) {
+          console.error("[transcriber] Exited", { code, signal });
+        }
         activeTranscriptions.delete(projectId);
 
         if (code !== 0) {
@@ -1031,7 +962,14 @@ function registerIpcHandlers(): void {
 
     let frames: string[];
     try {
-      frames = await extractKeyframes(resolvedVideoPath, clip.start_ms, clip.end_ms, 1, 512, getFfmpegPath(database));
+      frames = await extractKeyframes(
+        resolvedVideoPath,
+        clip.start_ms,
+        clip.end_ms,
+        1,
+        512,
+        resolveFfmpegPath(getSettings(database).ffmpegPath)
+      );
     } catch (err) {
       // Log the real error server-side; surface only a generic message to the renderer.
       console.error("extractKeyframes failed for clip", clipId, err);
@@ -1239,7 +1177,7 @@ function registerIpcHandlers(): void {
       throw new Error("Invalid path");
     }
 
-    await accessPromise(resolved, fsConstants.R_OK);
+    await access(resolved);
     shell.showItemInFolder(resolved);
   });
 
@@ -1350,7 +1288,6 @@ function registerIpcHandlers(): void {
 // ------------------------------------------------------------------------------
 
 app.whenReady().then(() => {
-  initLogger().catch(console.error);
   db = initDatabase();
   registerAppVideoHandler(() => db);
 

@@ -9,7 +9,6 @@
     "build": "tsc && vite build && electron-builder",
     "build:release": "npm run download:models && npm run build:python && npm run download:ffmpeg && npm run build",
     "download:ffmpeg": "node scripts/download-ffmpeg.js",
-    "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "postinstall": "electron-builder install-app-deps",
@@ -27,7 +26,6 @@
     "@radix-ui/react-progress": "^1.1.10",
     "@radix-ui/react-scroll-area": "^1.2.12",
     "@radix-ui/react-select": "^2.3.1",
-    "@radix-ui/react-separator": "^1.1.9",
     "@radix-ui/react-slot": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.2.9",
     "better-sqlite3": "^11.9.1",
@@ -48,7 +46,6 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.20",
     "electron": "^35.0.0",
     "electron-builder": "^25.1.7",
     "eslint": "^10.5.0",
@@ -61,7 +58,6 @@
     "typescript-eslint": "^8.61.0",
     "vite": "^6.2.0",
     "vite-plugin-electron": "^0.29.0",
-    "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^4.1.9"
   }
 }

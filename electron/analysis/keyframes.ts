@@ -1,7 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { execFileAsync } from "../exec";
 
 /** Max bytes for a single piped JPEG frame (downscaled frames are well under this). */
 const FRAME_MAX_BUFFER = 20 * 1024 * 1024;

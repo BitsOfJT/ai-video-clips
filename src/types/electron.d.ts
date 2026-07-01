@@ -1,4 +1,4 @@
-import type { OpenDialogOptions } from "electron";
+import type { AIProvider, VideoType } from "../constants";
 
 export interface VideoMetadata {
   durationSec: number;
@@ -40,8 +40,7 @@ export interface TranscriptSegment {
 
 export type AnalysisStatus = "idle" | "chunking" | "scoring" | "refining" | "completed" | "failed";
 
-export type AIProvider = "gemini" | "ollama";
-export type VideoType = "podcast" | "vlog";
+export type { AIProvider, VideoType };
 
 export interface AnalysisProgressPayload {
   projectId: string;
@@ -235,8 +234,6 @@ export interface ElectronAPI {
   onExportComplete: (callback: (payload: ExportCompletePayload) => void) => void;
   onExportError: (callback: (payload: ExportErrorPayload) => void) => void;
   onUpdateStatus: (callback: (payload: UpdateStatus) => void) => void;
-  openFileDialog: (options: OpenDialogOptions) => Promise<string | null>;
-  removeAllListeners: (channel: ElectronChannel) => void;
 }
 
 declare global {

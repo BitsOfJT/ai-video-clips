@@ -1,4 +1,3 @@
-export const APP_NAME = "AI Video Clipper";
 export const APP_VERSION = "1.0.1";
 
 export const SUPPORTED_VIDEO_EXTENSIONS = [".mp4", ".mov", ".mkv", ".avi", ".webm"];
@@ -40,20 +39,6 @@ export const IPC_CHANNELS = {
 } as const;
 
 export const VALID_IPC_CHANNELS = Object.values(IPC_CHANNELS) as readonly string[];
-
-// List of one-way channels used in preload listener setup
-export const ONE_WAY_IPC_CHANNELS = [
-  IPC_CHANNELS.TRANSCRIPTION_PROGRESS,
-  IPC_CHANNELS.TRANSCRIPTION_COMPLETE,
-  IPC_CHANNELS.TRANSCRIPTION_ERROR,
-  IPC_CHANNELS.ANALYSIS_PROGRESS,
-  IPC_CHANNELS.ANALYSIS_COMPLETE,
-  IPC_CHANNELS.ANALYSIS_ERROR,
-  IPC_CHANNELS.EXPORT_PROGRESS,
-  IPC_CHANNELS.EXPORT_COMPLETE,
-  IPC_CHANNELS.EXPORT_ERROR,
-  IPC_CHANNELS.UPDATE_STATUS,
-] as const;
 
 // AI analysis providers. Gemini = free tier (bring-your-own API key);
 // Ollama = fully local/offline. The provider layer is pluggable so other

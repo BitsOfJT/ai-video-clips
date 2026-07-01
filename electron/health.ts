@@ -1,19 +1,16 @@
 import { access } from "node:fs/promises";
-import { constants as fsConstants, existsSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { constants as fsConstants } from "node:fs";
 import type Database from "better-sqlite3";
 import type { SystemHealthCheck, SystemHealthItem } from "../src/types/electron";
 import { OLLAMA_DEFAULTS } from "../src/constants";
 import { getSettings } from "./settings";
 import {
-  getBundledFfmpegPath,
   getEditorPath,
   getModelPath,
   getTranscriberPath,
+  resolveFfmpegPath,
 } from "./paths";
-
-const execFileAsync = promisify(execFile);
+import { execFileAsync } from "./exec";
 
 async function pathReadable(filePath: string): Promise<boolean> {
   try {
@@ -158,20 +155,12 @@ async function checkOllama(
   }
 }
 
-function resolveFfmpegPath(db: Database.Database): string {
-  const settings = getSettings(db);
-  if (settings.ffmpegPath && existsSync(settings.ffmpegPath)) {
-    return settings.ffmpegPath;
-  }
-  return getBundledFfmpegPath() ?? "ffmpeg";
-}
-
 export async function runSystemHealthCheck(db: Database.Database): Promise<SystemHealthCheck> {
   const settings = getSettings(db);
   const transcriber = await checkBinary("Transcriber", getTranscriberPath());
   const editor = await checkBinary("Editor", getEditorPath());
   const whisperModel = await checkDirectory("Whisper model", getModelPath());
-  const ffmpeg = await checkFfmpeg(resolveFfmpegPath(db));
+  const ffmpeg = await checkFfmpeg(resolveFfmpegPath(settings.ffmpegPath));
 
   const checks: SystemHealthItem[] = [transcriber, editor, whisperModel, ffmpeg];
 

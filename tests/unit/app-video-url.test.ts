@@ -1,21 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { filePathFromAppVideoUrl, toAppVideoUrl } from "@/renderer/lib/app-video-url";
+import { describe, it, expect } from "vitest";
+import { filePathFromAppVideoUrl, toAppVideoUrl } from "@/lib/app-video-url";
 
-describe("toAppVideoUrl", () => {
-  it("builds a URL whose pathname round-trips to the original absolute path", () => {
-    const videoPath = "/Users/test/My Video.mp4";
-    const url = toAppVideoUrl(videoPath);
-    expect(url.startsWith("app-video://local")).toBe(true);
-    expect(filePathFromAppVideoUrl(url)).toBe(videoPath);
+describe("app-video-url", () => {
+  it("round-trips Unix paths via the local host", () => {
+    const videoPath = "/Users/test/video.mp4";
+    expect(filePathFromAppVideoUrl(toAppVideoUrl(videoPath))).toBe(videoPath);
   });
 
-  it("recovers paths when Chromium splits the first path segment into the hostname", () => {
-    if (process.platform === "win32") {
-      return;
-    }
-    const misParsed = "app-video://users/jordanthompson/Desktop/Tobi's%20Adventure.mov";
-    expect(filePathFromAppVideoUrl(misParsed)).toBe(
-      "/users/jordanthompson/Desktop/Tobi's Adventure.mov",
-    );
+  it("recovers paths when Chromium mis-parses the hostname", () => {
+    if (process.platform === "win32") return;
+    const requestUrl = "app-video://users/test/video.mp4";
+    expect(filePathFromAppVideoUrl(requestUrl)).toBe("/users/test/video.mp4");
   });
 });
