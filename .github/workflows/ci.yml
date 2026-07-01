@@ -34,5 +34,7 @@ jobs:
 
       - name: Verify production renderer loads
         run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
           npx vite build
           npm run test:renderer

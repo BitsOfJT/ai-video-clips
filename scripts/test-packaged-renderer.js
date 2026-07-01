@@ -55,24 +55,38 @@ async function assertBundledAssets() {
   await assertExists(path.join(repoRoot, "dist", styleMatch[1].replace(/^\.\//, "")), "bundled CSS");
 }
 
+function getElectronLaunchCommand() {
+  const electronBin =
+    process.platform === "win32"
+      ? path.join(repoRoot, "node_modules", ".bin", "electron.cmd")
+      : path.join(repoRoot, "node_modules", ".bin", "electron");
+
+  const electronArgs = [
+    // Required on Linux CI runners (SUID sandbox is not configured in GHA).
+    "--no-sandbox",
+    path.join(repoRoot, "scripts", "test-renderer-load.mjs"),
+  ];
+
+  // GitHub Actions ubuntu-latest has no $DISPLAY; xvfb provides a virtual X server.
+  if (process.platform === "linux" && !process.env.DISPLAY) {
+    return {
+      command: "xvfb-run",
+      args: ["-a", electronBin, ...electronArgs],
+    };
+  }
+
+  return { command: electronBin, args: electronArgs };
+}
+
 function runElectronLoadTest() {
   return new Promise((resolve, reject) => {
-    const electronBin =
-      process.platform === "win32"
-        ? path.join(repoRoot, "node_modules", ".bin", "electron.cmd")
-        : path.join(repoRoot, "node_modules", ".bin", "electron");
+    const { command, args } = getElectronLaunchCommand();
 
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     delete env.VITE_DEV_SERVER_URL;
 
-    const electronArgs = [
-      // Required on Linux CI runners (SUID sandbox is not configured in GHA).
-      "--no-sandbox",
-      path.join(repoRoot, "scripts", "test-renderer-load.mjs"),
-    ];
-
-    const child = spawn(electronBin, electronArgs, {
+    const child = spawn(command, args, {
       cwd: repoRoot,
       env,
       stdio: "inherit",
