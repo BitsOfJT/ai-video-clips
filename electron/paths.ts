@@ -44,3 +44,22 @@ export function getBundledFfprobePath(): string | null {
   const probePath = path.join(getBundledFfmpegDir(), `ffprobe${ext}`);
   return existsSync(probePath) ? probePath : null;
 }
+
+/** User override → bundled binary → system PATH. */
+export function resolveFfmpegPath(ffmpegOverride?: string | null): string {
+  if (ffmpegOverride && existsSync(ffmpegOverride)) {
+    return ffmpegOverride;
+  }
+  return getBundledFfmpegPath() ?? "ffmpeg";
+}
+
+/** Derive ffprobe next to a custom ffmpeg, else bundled, else PATH. */
+export function resolveFfprobePath(ffmpegOverride?: string | null): string {
+  if (ffmpegOverride && existsSync(ffmpegOverride)) {
+    const dir = path.dirname(ffmpegOverride);
+    const ext = process.platform === "win32" ? ".exe" : "";
+    const probePath = path.join(dir, `ffprobe${ext}`);
+    if (existsSync(probePath)) return probePath;
+  }
+  return getBundledFfprobePath() ?? "ffprobe";
+}

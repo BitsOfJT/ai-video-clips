@@ -3,7 +3,7 @@ import { Download, Sparkles, Trophy } from "lucide-react";
 import ExportCaptionsToggle from "@/renderer/components/ExportCaptionsToggle";
 import ClipCard from "@/renderer/components/ClipCard";
 import { Button } from "@/renderer/components/ui/button";
-import { computeCompositeScore, sortByComposite } from "@/renderer/lib/scoring";
+import { computeCompositeScore, sortByComposite } from "@/renderer/lib/clip-scoring";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { Clip } from "@/types/electron";
 

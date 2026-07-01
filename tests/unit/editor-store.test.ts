@@ -21,7 +21,6 @@ const electronAPI = {
   onExportProgress: mockOnExportProgress,
   onExportComplete: vi.fn(),
   onExportError: vi.fn(),
-  removeAllListeners: vi.fn(),
 };
 
 vi.stubGlobal("window", { electronAPI });

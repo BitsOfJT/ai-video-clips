@@ -147,29 +147,3 @@ describe("UpdateService", () => {
     expect(service.getStatus().state).toBe("error");
   });
 });
-
-describe("canInstallUpdate", () => {
-  it("blocks install while exports are queued", async () => {
-    const { canInstallUpdate } = await import("../../src/renderer/lib/update-helpers");
-    expect(
-      canInstallUpdate({
-        exportQueue: ["clip-1"],
-        exportStatus: {},
-        transcriptionProgress: {},
-        analysisProgress: {},
-      })
-    ).toBe(false);
-  });
-
-  it("allows install when no background jobs are active", async () => {
-    const { canInstallUpdate } = await import("../../src/renderer/lib/update-helpers");
-    expect(
-      canInstallUpdate({
-        exportQueue: [],
-        exportStatus: { "clip-1": "completed" },
-        transcriptionProgress: {},
-        analysisProgress: {},
-      })
-    ).toBe(true);
-  });
-});

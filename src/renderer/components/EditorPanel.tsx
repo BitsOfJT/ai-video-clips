@@ -6,7 +6,7 @@ import { Input } from "@/renderer/components/ui/input";
 import { Label } from "@/renderer/components/ui/label";
 import { Textarea } from "@/renderer/components/ui/textarea";
 import { useAppStore } from "@/renderer/store/useAppStore";
-import { toAppVideoUrl } from "@/renderer/lib/app-video-url";
+import { toAppVideoUrl } from "@/lib/app-video-url";
 import type { Clip, Project } from "@/types/electron";
 
 interface EditorPanelProps {

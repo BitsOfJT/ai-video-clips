@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type OpenDialogOptions } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS, VALID_IPC_CHANNELS } from "../src/constants.js";
 
 const validChannels = VALID_IPC_CHANNELS;
@@ -17,9 +17,6 @@ async function invoke<T>(channel: Channel, ...args: unknown[]): Promise<T> {
  */
 const electronAPI = {
   invoke,
-
-  openFileDialog: (options: OpenDialogOptions): Promise<string | null> =>
-    invoke<string | null>(IPC_CHANNELS.DIALOG_OPEN_FILE, options),
 
   // One-way listeners: securely wrap ipcRenderer.on to only accept whitelisted channels.
   // Named channel constants are used directly so reordering in constants.ts cannot break them.
@@ -54,11 +51,6 @@ const electronAPI = {
   },
   onUpdateStatus: (callback: (payload: import("../src/types/electron").UpdateStatus) => void) => {
     ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, (_, payload) => callback(payload));
-  },
-  removeAllListeners: (channel: Channel) => {
-    if (validChannels.includes(channel)) {
-      ipcRenderer.removeAllListeners(channel);
-    }
   },
 };
 

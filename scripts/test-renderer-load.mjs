@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-// Keep in sync with electron/renderer-path.ts → getProductionRendererHtmlPath()
 const htmlPath = path.join(repoRoot, "dist", "index.html");
 
 const LOAD_TIMEOUT_MS = 30_000;

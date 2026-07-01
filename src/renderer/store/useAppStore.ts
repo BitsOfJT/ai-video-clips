@@ -52,10 +52,7 @@ interface AppState {
   loadProjects: () => Promise<void>;
   importProject: (videoPath: string) => Promise<void>;
   startTranscription: (projectId: string, extractAudio: boolean) => Promise<void>;
-  setTranscriptionProgress: (projectId: string, percent: number) => void;
-  setTranscriptionError: (projectId: string, error: string | null) => void;
   updateProjectTranscript: (projectId: string, transcriptJson: string) => void;
-  clearTranscriptionState: (projectId: string) => void;
   startAnalysis: (input: StartAnalysisInput) => Promise<void>;
   loadClips: (projectId: string) => Promise<void>;
   loadSettings: () => Promise<void>;
@@ -71,8 +68,6 @@ interface AppState {
   installUpdate: () => Promise<void>;
   dismissUpdateBanner: () => void;
 }
-
-export type { AppState };
 
 async function invokeIpc<T>(channel: ElectronChannel, ...args: unknown[]): Promise<T> {
   return window.electronAPI.invoke<T>(channel, ...args);
@@ -323,31 +318,12 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    setTranscriptionProgress: (projectId, percent) =>
-      set((state) => ({
-        transcriptionProgress: { ...state.transcriptionProgress, [projectId]: percent },
-      })),
-
-    setTranscriptionError: (projectId, error) =>
-      set((state) => ({
-        transcriptionError: { ...state.transcriptionError, [projectId]: error ?? "" },
-      })),
-
     updateProjectTranscript: (projectId, transcriptJson) =>
       set((state) => ({
         projects: state.projects.map((p) =>
           p.id === projectId ? { ...p, transcript_json: transcriptJson } : p
         ),
       })),
-
-    clearTranscriptionState: (projectId) =>
-      set((state) => {
-        const nextProgress = { ...state.transcriptionProgress };
-        const nextError = { ...state.transcriptionError };
-        delete nextProgress[projectId];
-        delete nextError[projectId];
-        return { transcriptionProgress: nextProgress, transcriptionError: nextError };
-      }),
 
     startAnalysis: async (input: StartAnalysisInput) => {
       set((state) => ({

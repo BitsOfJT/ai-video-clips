@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { Loader2, Upload, Video } from "lucide-react";
 import { cn } from "@/renderer/lib/utils";
 import { useAppStore } from "@/renderer/store/useAppStore";
-import { SUPPORTED_VIDEO_EXTENSIONS } from "@/constants";
+import { IPC_CHANNELS, SUPPORTED_VIDEO_EXTENSIONS } from "@/constants";
 
 function isSupportedVideo(filePath: string): boolean {
   const lowerPath = filePath.toLowerCase();
@@ -142,20 +142,19 @@ export default function ImportZone({ variant = "hero" }: ImportZoneProps) {
   );
 
   const handleClick = useCallback(async () => {
-    if (window.electronAPI?.openFileDialog) {
-      const filePath = await window.electronAPI.openFileDialog({
-        properties: ["openFile" as const],
+    const filePath = await window.electronAPI.invoke<string | null>(
+      IPC_CHANNELS.DIALOG_OPEN_FILE,
+      {
+        properties: ["openFile"],
         filters: [
           {
             name: "Video files",
             extensions: SUPPORTED_VIDEO_EXTENSIONS.map((ext) => ext.slice(1)),
           },
         ],
-      });
-      if (filePath) void importVideoFile(filePath);
-      return;
-    }
-    fileInputRef.current?.click();
+      }
+    );
+    if (filePath) void importVideoFile(filePath);
   }, [importVideoFile]);
 
   const handleKeyDown = useCallback(

@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import type Database from "better-sqlite3";
 import { net, protocol } from "electron";
 import { SUPPORTED_VIDEO_EXTENSIONS } from "../src/constants.js";
-import { filePathFromAppVideoUrl } from "../src/renderer/lib/app-video-url.js";
+import { filePathFromAppVideoUrl } from "../src/lib/app-video-url.js";
 
 /** Must run before app.ready — enables <video> streaming on app-video:// */
 let appVideoSchemeRegistered = false;

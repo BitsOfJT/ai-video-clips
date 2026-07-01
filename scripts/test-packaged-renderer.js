@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-// Keep in sync with electron/renderer-path.ts → getProductionRendererHtmlPath()
+// Production renderer path: dist/index.html under app root
 const htmlPath = path.join(repoRoot, "dist", "index.html");
 const legacyWrongPath = path.join(repoRoot, "dist-electron", "renderer", "index.html");
 

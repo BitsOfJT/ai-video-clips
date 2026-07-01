@@ -3,7 +3,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/renderer/components/ui/tooltip";
-import { SCORE_CRITERIA } from "@/renderer/lib/score-criteria";
+import { SCORE_CRITERIA } from "@/renderer/lib/clip-scoring";
 import { cn } from "@/renderer/lib/utils";
 import type { Clip } from "@/types/electron";
 

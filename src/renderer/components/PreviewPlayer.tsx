@@ -4,8 +4,8 @@ import { Button } from "@/renderer/components/ui/button";
 import ExportCaptionsToggle from "@/renderer/components/ExportCaptionsToggle";
 import ScoreCriteriaGrid from "@/renderer/components/ScoreCriteriaGrid";
 import { cn } from "@/renderer/lib/utils";
-import { computeCompositeScore } from "@/renderer/lib/scoring";
-import { toAppVideoUrl } from "@/renderer/lib/app-video-url";
+import { computeCompositeScore } from "@/renderer/lib/clip-scoring";
+import { toAppVideoUrl } from "@/lib/app-video-url";
 import { useAppStore } from "@/renderer/store/useAppStore";
 import type { Clip, Project } from "@/types/electron";
 
