@@ -117,13 +117,13 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
-            artifacts/out/*.dmg
-            artifacts/out/*.dmg.blockmap
-            artifacts/out/*.zip
-            artifacts/out/*.zip.blockmap
-            artifacts/out/latest-mac.yml
-            artifacts/out/*Setup*.exe
-            artifacts/out/*Setup*.exe.blockmap
-            artifacts/out/latest.yml
+            artifacts/*.dmg
+            artifacts/*.dmg.blockmap
+            artifacts/*.zip
+            artifacts/*.zip.blockmap
+            artifacts/latest-mac.yml
+            artifacts/*Setup*.exe
+            artifacts/*Setup*.exe.blockmap
+            artifacts/latest.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
