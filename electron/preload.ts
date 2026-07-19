@@ -49,6 +49,15 @@ const electronAPI = {
   onExportError: (callback: (payload: { clipId: string; error: string }) => void) => {
     ipcRenderer.on(IPC_CHANNELS.EXPORT_ERROR, (_, payload) => callback(payload));
   },
+  onLongformExportProgress: (callback: (payload: { projectId: string; percent: number }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.LONGFORM_EXPORT_PROGRESS, (_, payload) => callback(payload));
+  },
+  onLongformExportComplete: (callback: (payload: { projectId: string; outputPath: string }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.LONGFORM_EXPORT_COMPLETE, (_, payload) => callback(payload));
+  },
+  onLongformExportError: (callback: (payload: { projectId: string; error: string }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.LONGFORM_EXPORT_ERROR, (_, payload) => callback(payload));
+  },
   onUpdateStatus: (callback: (payload: import("../src/types/electron").UpdateStatus) => void) => {
     ipcRenderer.on(IPC_CHANNELS.UPDATE_STATUS, (_, payload) => callback(payload));
   },

@@ -111,6 +111,28 @@ export interface ExportErrorPayload {
   error: string;
 }
 
+/** Persisted Long-Form Editor timeline (JSON in `longform_edits.timeline_json`). */
+export interface LongFormEditsRow {
+  projectId: string;
+  timelineJson: string;
+  updatedAt: string;
+}
+
+export interface LongFormExportProgressPayload {
+  projectId: string;
+  percent: number;
+}
+
+export interface LongFormExportCompletePayload {
+  projectId: string;
+  outputPath: string;
+}
+
+export interface LongFormExportErrorPayload {
+  projectId: string;
+  error: string;
+}
+
 export interface SystemHealthItem {
   ok: boolean;
   label: string;
@@ -210,6 +232,15 @@ export type ElectronChannel =
   | "export:progress"
   | "export:complete"
   | "export:error"
+  | "longform:getEdits"
+  | "longform:saveEdits"
+  | "longform:export:start"
+  | "longform:export:cancel"
+  | "longform:export:progress"
+  | "longform:export:complete"
+  | "longform:export:error"
+  | "longform:saveSrt"
+  | "longform:saveThumbnail"
   | "shell:showItem"
   | "ffmpeg:validate"
   | "dialog:openFile"
@@ -233,6 +264,9 @@ export interface ElectronAPI {
   onExportProgress: (callback: (payload: ExportProgressPayload) => void) => void;
   onExportComplete: (callback: (payload: ExportCompletePayload) => void) => void;
   onExportError: (callback: (payload: ExportErrorPayload) => void) => void;
+  onLongformExportProgress: (callback: (payload: LongFormExportProgressPayload) => void) => void;
+  onLongformExportComplete: (callback: (payload: LongFormExportCompletePayload) => void) => void;
+  onLongformExportError: (callback: (payload: LongFormExportErrorPayload) => void) => void;
   onUpdateStatus: (callback: (payload: UpdateStatus) => void) => void;
 }
 
