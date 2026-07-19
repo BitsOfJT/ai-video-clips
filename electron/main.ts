@@ -47,6 +47,13 @@ import {
   resolveFfprobePath,
 } from "./paths";
 import { parseFrameRate, validateVideoPath } from "./video-utils";
+import {
+  cancelLongformExport,
+  enqueueLongformExport,
+  extractThumbnailFrame,
+  killAllLongformExports,
+  parseTimelineJson,
+} from "./longform-export";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -273,6 +280,16 @@ function initDatabase(): Database.Database {
 
   // Phase 6: persist export output path for reveal-in-folder after restart
   addColumnIfMissing("clips", "output_path", "output_path TEXT");
+
+  // Phase 7: Long-Form Editor EDL persistence
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS longform_edits (
+      project_id TEXT PRIMARY KEY,
+      timeline_json TEXT NOT NULL,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `);
 
   return database;
 }
@@ -718,6 +735,7 @@ function registerIpcHandlers(): void {
 
     const deleteProjectTx = database.transaction(() => {
       database.prepare("DELETE FROM clips WHERE project_id = ?").run(projectId);
+      database.prepare("DELETE FROM longform_edits WHERE project_id = ?").run(projectId);
       database.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
     });
     deleteProjectTx();
@@ -1281,6 +1299,142 @@ function registerIpcHandlers(): void {
     }
     updateService.quitAndInstall();
   });
+
+  // --------------------------------------------------------------------------
+  // Long-Form Editor (Phase 7)
+  // --------------------------------------------------------------------------
+
+  ipcMain.handle(
+    IPC_CHANNELS.LONGFORM_GET_EDITS,
+    (_event, projectId: string): { timelineJson: string | null; updatedAt: string | null } => {
+      const database = requireDatabase();
+      const row = database
+        .prepare("SELECT timeline_json, updated_at FROM longform_edits WHERE project_id = ?")
+        .get(projectId) as { timeline_json: string; updated_at: string } | undefined;
+      return {
+        timelineJson: row?.timeline_json ?? null,
+        updatedAt: row?.updated_at ?? null,
+      };
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.LONGFORM_SAVE_EDITS,
+    (_event, projectId: string, timelineJson: string): void => {
+      const database = requireDatabase();
+      const project = database.prepare("SELECT id FROM projects WHERE id = ?").get(projectId);
+      if (!project) throw new Error("Project not found");
+      parseTimelineJson(timelineJson);
+      database
+        .prepare(
+          `INSERT INTO longform_edits (project_id, timeline_json, updated_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(project_id) DO UPDATE SET
+             timeline_json = excluded.timeline_json,
+             updated_at = CURRENT_TIMESTAMP`
+        )
+        .run(projectId, timelineJson);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.LONGFORM_EXPORT_START,
+    async (_event, projectId: string, timelineJson: string): Promise<boolean> => {
+      const database = requireDatabase();
+      const project = database
+        .prepare("SELECT id, video_path, title FROM projects WHERE id = ?")
+        .get(projectId) as { id: string; video_path: string; title: string | null } | undefined;
+      if (!project) throw new Error("Project not found");
+
+      await validateVideoPath(project.video_path);
+      const timeline = parseTimelineJson(timelineJson);
+
+      database
+        .prepare(
+          `INSERT INTO longform_edits (project_id, timeline_json, updated_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(project_id) DO UPDATE SET
+             timeline_json = excluded.timeline_json,
+             updated_at = CURRENT_TIMESTAMP`
+        )
+        .run(projectId, timelineJson);
+
+      const defaultName = `${(project.title || "youtube-export").replace(/[^\w-]+/g, "_")}.mp4`;
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        title: "Export YouTube video",
+        defaultPath: defaultName,
+        filters: [{ name: "MP4 Video", extensions: ["mp4"] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+
+      const settings = getSettings(database);
+      enqueueLongformExport(
+        {
+          projectId,
+          videoPath: project.video_path,
+          outputPath: result.filePath,
+          timeline,
+          ffmpegPath: resolveFfmpegPath(settings.ffmpegPath),
+        },
+        () => mainWindow
+      );
+      return true;
+    }
+  );
+
+  ipcMain.handle(IPC_CHANNELS.LONGFORM_EXPORT_CANCEL, (_event, projectId: string): void => {
+    cancelLongformExport(projectId);
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.LONGFORM_SAVE_SRT,
+    async (_event, projectId: string, srtContent: string): Promise<string | null> => {
+      const database = requireDatabase();
+      const project = database
+        .prepare("SELECT title FROM projects WHERE id = ?")
+        .get(projectId) as { title: string | null } | undefined;
+      if (!project) throw new Error("Project not found");
+
+      const defaultName = `${(project.title || "captions").replace(/[^\w-]+/g, "_")}.srt`;
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        title: "Save SRT captions",
+        defaultPath: defaultName,
+        filters: [{ name: "SubRip Captions", extensions: ["srt"] }],
+      });
+      if (result.canceled || !result.filePath) return null;
+      await writeFile(result.filePath, srtContent, "utf8");
+      return result.filePath;
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.LONGFORM_SAVE_THUMBNAIL,
+    async (_event, projectId: string, sourceTimeSec: number): Promise<string | null> => {
+      const database = requireDatabase();
+      const project = database
+        .prepare("SELECT video_path, title FROM projects WHERE id = ?")
+        .get(projectId) as { video_path: string; title: string | null } | undefined;
+      if (!project) throw new Error("Project not found");
+      await validateVideoPath(project.video_path);
+
+      const defaultName = `${(project.title || "thumbnail").replace(/[^\w-]+/g, "_")}.jpg`;
+      const result = await dialog.showSaveDialog(mainWindow!, {
+        title: "Save thumbnail frame",
+        defaultPath: defaultName,
+        filters: [{ name: "JPEG Image", extensions: ["jpg"] }],
+      });
+      if (result.canceled || !result.filePath) return null;
+
+      const settings = getSettings(database);
+      await extractThumbnailFrame(
+        resolveFfmpegPath(settings.ffmpegPath),
+        project.video_path,
+        result.filePath,
+        sourceTimeSec
+      );
+      return result.filePath;
+    }
+  );
 }
 
 // ------------------------------------------------------------------------------
@@ -1317,4 +1471,5 @@ app.on("before-quit", () => {
   for (const [, child] of activeExports) {
     child.kill();
   }
+  killAllLongformExports();
 });
