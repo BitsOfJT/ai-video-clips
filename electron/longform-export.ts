@@ -160,27 +160,32 @@ export async function runLongformExport(
         0.05,
         0.9
       );
-      await runFfmpeg(
-        job.ffmpegPath,
-        [
-          "-y",
-          "-i",
-          concatTmp,
-          "-af",
-          "loudnorm=I=-14:TP=-1.5:LRA=11",
-          "-c:v",
-          "copy",
-          "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
-          job.outputPath,
-        ],
-        job.projectId,
-        getWindow,
-        0.05,
-        0.95
-      );
+      try {
+        await runFfmpeg(
+          job.ffmpegPath,
+          [
+            "-y",
+            "-i",
+            concatTmp,
+            "-af",
+            "loudnorm=I=-14:TP=-1.5:LRA=11",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            job.outputPath,
+          ],
+          job.projectId,
+          getWindow,
+          0.05,
+          0.95
+        );
+      } catch {
+        // FFmpeg loudnorm can fail on fully silent tracks; keep the export usable.
+        await fsp.copyFile(concatTmp, job.outputPath);
+      }
     } else {
       await runFfmpeg(job.ffmpegPath, finalArgs, job.projectId, getWindow, 0.1, 0.9);
     }
