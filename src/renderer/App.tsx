@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Layout from "@/renderer/components/Layout";
 import HomePage from "@/renderer/pages/HomePage";
+import LongFormEditorPage from "@/renderer/pages/LongFormEditorPage";
 import SettingsPage from "@/renderer/pages/SettingsPage";
 import SetupPage from "@/renderer/pages/SetupPage";
 import { initIpcListeners, useAppStore } from "@/renderer/store/useAppStore";
@@ -21,9 +22,10 @@ export default function App() {
   }, [loadUpdateStatus]);
 
   const showSetup = health && !health.ready && !setupDismissed && view !== "settings";
+  const contentWidth = view === "longform" && !showSetup ? "full" : "default";
 
   return (
-    <Layout>
+    <Layout contentWidth={contentWidth}>
       {healthLoading && health === null ? (
         <div className="flex h-64 items-center justify-center text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -39,6 +41,8 @@ export default function App() {
         />
       ) : view === "settings" ? (
         <SettingsPage />
+      ) : view === "longform" ? (
+        <LongFormEditorPage />
       ) : (
         <HomePage />
       )}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clapperboard, Plus, Settings, Sparkles, Trash2 } from "lucide-react";
+import { Clapperboard, Film, Plus, Settings, Sparkles, Trash2 } from "lucide-react";
 import { cn } from "@/renderer/lib/utils";
 import { Button } from "@/renderer/components/ui/button";
 import { ProjectStatusDot } from "@/renderer/components/WorkflowStepper";
@@ -28,7 +28,9 @@ export default function Sidebar() {
 
   const selectProject = (id: string) => {
     setCurrentProjectId(id);
-    setView("home");
+    if (view !== "longform") {
+      setView("home");
+    }
   };
 
   const scrollToImport = () => {
@@ -72,6 +74,31 @@ export default function Sidebar() {
         </div>
       </div>
 
+      <div className="space-y-1 border-b border-border/80 p-3">
+        <button
+          type="button"
+          onClick={() => setView("home")}
+          className={cn(
+            "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors hover:bg-accent/60",
+            view === "home" && "bg-accent/80 text-foreground ring-1 ring-primary/25"
+          )}
+        >
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          Shorts Clipper
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("longform")}
+          className={cn(
+            "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors hover:bg-accent/60",
+            view === "longform" && "bg-accent/80 text-foreground ring-1 ring-primary/25"
+          )}
+        >
+          <Film className="h-4 w-4 text-muted-foreground" />
+          Long-Form Editor
+        </button>
+      </div>
+
       <div className="flex-1 overflow-auto p-3">
         <div className="mb-2 flex items-center justify-between px-1">
           <h2 className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
@@ -104,7 +131,7 @@ export default function Sidebar() {
             </div>
           ) : (
             projects.map((project) => {
-              const isActive = view === "home" && currentProjectId === project.id;
+              const isActive = currentProjectId === project.id;
               const projectClips = clips[project.id] ?? [];
               const hasClips =
                 projectClips.length > 0 || project.analysis_status === "completed";

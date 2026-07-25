@@ -15,7 +15,7 @@ import { canInstallUpdate } from "@/renderer/lib/update-helpers";
 
 type ElectronChannel = import("@/types/electron").ElectronChannel;
 
-export type AppView = "home" | "settings";
+export type AppView = "home" | "longform" | "settings";
 
 interface AppState {
   projects: Project[];
