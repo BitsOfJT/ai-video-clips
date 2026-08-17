@@ -29,7 +29,7 @@
     "@radix-ui/react-select": "^2.3.1",
     "@radix-ui/react-slot": "^1.2.5",
     "@radix-ui/react-tooltip": "^1.2.16",
-    "better-sqlite3": "^11.9.1",
+    "better-sqlite3": "^13.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "electron-updater": "^6.8.9",
